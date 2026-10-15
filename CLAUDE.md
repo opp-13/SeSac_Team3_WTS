@@ -2885,3 +2885,43 @@ KOSPI200 선물 · 옵션. 주식과 다른 도메인이다.
 | RPO 0 보장 | 클라우드 간 동기 복제가 필요하다. 대신 측정하고 목표를 둔다 (Phase 12) |
 | KIS 앱키 여러 개로 구독 상한 우회 | KIS 이용 정책을 확인하지 않은 우회다. 계층형 구독으로 해결한다 (§57.2) |
 | Event Sourcing · Full CQRS · Saga · 2PC · 분산 트랜잭션 · Service Mesh | 기능이 아니라 설계 선택이다. §46을 유지한다 |
+
+---
+
+# 64. EKS 내부 검증 배포
+
+> Phase 8과 별개로, 앱을 trader-gitops의 두 EKS 클러스터에 올려 Kafka · MySQL 연동을 확인하는 배포다.
+> **§62.4의 "Cognito 없이 배포하지 않는다"는 이 배포에 적용하지 않는다** (ADR-0020). 조건은 시험 계정만 쓰고 실사용자 · 실제 개인정보를 받지 않는 것이다.
+
+## 64.1 범위
+
+```text
+- 접속: VPC 셸의 kubectl port-forward, 그리고 기존 Terraform 진입점(CloudFront → internal ALB → frontend,
+  TargetGroupBinding)에 frontend만 붙인 시험용 경로 (ADR-0020 6항).
+- 인증은 Mock Login 그대로다. Cognito를 쓰지 않는다. 그래서 진입점으로는 시험 계정만 쓴다. 실사용자 · 실제 개인정보를 받지 않는다.
+  실사용자를 받기 전에는 실제 인증을 붙인다 (§62.4, Phase 11).
+- 배포 정의는 trader-gitops 저장소에 있다 (applications/<tier>/wts/). 이 저장소는 이미지와 설정 계약만 책임진다.
+```
+
+## 64.2 배치
+
+| 서비스 | tier |
+|---|---|
+| frontend · gateway-service · user-service · market-service | channel |
+| trading-service | corebank |
+
+Valkey는 tier마다 하나씩 둔다. market-service · trading-service는 replica 1이다 (ADR-0020).
+
+## 64.3 이미지
+
+```text
+- 서비스마다 backend/<서비스>/Dockerfile. 멀티스테이지, 이미지 안에서 Gradle로 jar를 만든다 (ADR-0019).
+- 실행 사용자는 숫자 UID 10001이다.
+- 푸시는 CI가 아니라 ./infra/scripts/push-images.sh <channel|corebank> <태그> 로 한다. 태그는 불변이고 latest를 쓰지 않는다.
+```
+
+## 64.4 2단계 – 설계 전
+
+channel → corebank는 internal ALB 443 하나뿐이고 Kafka는 tier를 넘지 못한다. 그래서 1단계에서는
+trading-service가 시세를 받지 못하고, gateway에서도 닿지 않는다. 인증서 · ALB · 시세 중계 ·
+market ← trading 수요 신호(§57.2) 방향은 상세 설계를 이 문서 끝에 새 번호로 덧붙인 뒤 구현한다 (ADR-0020, §63).
