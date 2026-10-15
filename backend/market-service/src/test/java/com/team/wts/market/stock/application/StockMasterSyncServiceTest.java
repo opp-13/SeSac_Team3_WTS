@@ -174,7 +174,7 @@ class StockMasterSyncServiceTest {
     }
 
     private StockMasterSyncService service(String provider) {
-        MarketProperties properties = new MarketProperties(provider, List.of(), null, null, null);
+        MarketProperties properties = new MarketProperties(provider, List.of(), null, null, null, null);
         PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
         when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         return new StockMasterSyncService(stocks, source, properties, transactions,

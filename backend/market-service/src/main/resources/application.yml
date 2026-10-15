@@ -120,6 +120,17 @@ market:
     # 시세가 끊긴 종목의 봉을 닫아주는 주기
     sweep-interval-ms: 30000
 
+  # corebank trading-service로 시세를 중계한다 (CLAUDE.md §65, ADR-0021).
+  # trading-service와 tier가 달라 Valkey · Kafka를 나눠 쓸 때만 켠다. 로컬은 같은 Valkey · Kafka라 끈다.
+  feed-relay:
+    enabled: ${MARKET_FEED_RELAY_ENABLED:false}
+    # 예: https://trading.internal.cloudnetwork.kr/internal/market/prices
+    url: ${MARKET_FEED_RELAY_URL:}
+    # Secrets Manager wts/channel/market-feed. trading-service의 키와 같은 값이다.
+    secret: ${MARKET_FEED_SECRET:}
+    connect-timeout: 2s
+    read-timeout: 3s
+
 management:
   endpoints:
     web:

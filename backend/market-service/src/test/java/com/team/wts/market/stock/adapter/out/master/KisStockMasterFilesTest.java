@@ -17,7 +17,7 @@ class KisStockMasterFilesTest {
     @DisplayName("저장소의 스냅샷만으로 전 종목 마스터를 만든다 (네트워크 없음)")
     void buildsFullMasterFromBundledSnapshot() {
         List<Stock> stocks = new KisStockMasterFiles(
-                new MarketProperties("mock", List.of(), null, null, null)).snapshot();
+                new MarketProperties("mock", List.of(), null, null, null, null)).snapshot();
 
         // 2026-10 스냅샷: KOSPI 주권 914 + KOSDAQ 주권 1,805. 스냅샷을 갱신하면 숫자는 바뀐다.
         assertThat(stocks.stream().filter(s -> s.market() == Market.KOSPI).count()).isGreaterThan(800);

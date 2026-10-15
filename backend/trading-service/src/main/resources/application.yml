@@ -72,6 +72,14 @@ trading:
     max-retry-count: 5
     send-timeout: 5s
 
+  # channel market-service가 중계하는 시세 수신 (CLAUDE.md §65, ADR-0021).
+  # market-service와 tier가 달라 Valkey · Kafka를 나눠 쓸 때만 켠다. 로컬은 같은 Valkey · Kafka라 끈다.
+  market-feed:
+    enabled: ${TRADING_MARKET_FEED_ENABLED:false}
+    # Secrets Manager wts/corebank/market-feed. market-service의 키와 같은 값이다.
+    secret: ${MARKET_FEED_SECRET:}
+    max-clock-skew: 60s
+
 market:
   price:
     # 최신 시세가 stale이면 시장가 주문을 거절한다 (CLAUDE.md §11).

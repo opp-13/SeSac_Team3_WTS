@@ -43,14 +43,19 @@ WTS 앱을 올려 앱이 그 Kafka · MySQL에 붙는지 확인한다.
      넣지 않으면 로그인 POST와 WebSocket 업그레이드가 403이다(로컬 재현으로 확인).
    - 시험 계정만 쓴다. 실사용자는 ADR-0041 · 0012의 컴플라이언스 승인과 실제 인증이 생긴 뒤다.
 
+7. **비밀값은 Secrets Manager에 두고 앱 pod가 파일로 마운트한다**(trader-terraform-sessac ADR-0047, 2026-10-15).
+   - 방식: Secrets Store CSI Driver + AWS provider(EKS add-on)가 앱별 Pod Identity로 자기 시크릿만 `/mnt/secrets`에 마운트한다.
+   - 앱이 읽는 법: Spring이 `SPRING_CONFIG_IMPORT=configtree:/mnt/secrets/`로 파일 이름을 속성으로 읽는다. 그래서 `${MYSQL_PASSWORD}` 등 기존 placeholder가 그대로 풀리고, **앱 코드는 바뀌지 않는다**(로컬 검증).
+   - 손으로 만들던 `wts-db` · `wts-auth` Secret은 없어진다. MySQL root와 Kafka 접속 Secret은 Kubernetes Secret으로 남는다(operator · Strimzi가 쓰는 값).
+
 ## 막힌 지점 (이번 범위 밖)
 
 channel → corebank는 internal ALB 443(HTTPS) 하나만 열려 있고, corebank → channel은 막혀 있다. Kafka(TCP)는 tier를 넘지 못한다.
 
 | # | 문제 | 필요한 것 |
 |---|---|---|
-| 1 | gateway → trading 프록시 | corebank internal ALB + **ACM 인증서**. 인증서 · 도메인이 아직 없다 |
-| 2 | trading이 체결 판정에 쓰는 시세 | `market.price.updated`(Kafka)와 최신가(Valkey)가 모두 channel에만 있다. HTTP 중계(예: channel 포워더 → corebank KafkaBridge, ALB 443 경유)와 trading 쪽 코드 변경이 필요하다 |
+| 1 | gateway → trading 프록시 | corebank internal ALB + **ACM 인증서**. → trader-terraform-sessac ADR-0046(`trading.internal.cloudnetwork.kr`)으로 풀었다 |
+| 2 | trading이 체결 판정에 쓰는 시세 | `market.price.updated`(Kafka)와 최신가(Valkey)가 모두 channel에만 있다. → **ADR-0021(CLAUDE.md §65)**: channel market-service가 서명한 HTTPS로 밀고 corebank trading-service가 받아 Valkey · Kafka에 다시 낸다 |
 | 3 | Phase 8-2 설계(§57.2)의 market ← trading `order.accepted` 수요 신호 | corebank → channel이 막혀 있어 그대로는 불가능하다. channel이 끌어오는(pull) 방식으로 바꿔야 한다 |
 
 그래서 **1단계 결과는 이렇다.**

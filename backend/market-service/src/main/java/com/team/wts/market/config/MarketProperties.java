@@ -15,6 +15,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param master        종목 마스터 동기화 (§57.1)
  * @param mock          Mock Market Mode 동작 파라미터
  * @param price         시세 유효성 판단 기준
+ * @param feedRelay     corebank로 시세를 중계한다 (§65)
  */
 @ConfigurationProperties(prefix = "market")
 public record MarketProperties(
@@ -22,13 +23,15 @@ public record MarketProperties(
         List<String> pinnedSymbols,
         Master master,
         Mock mock,
-        Price price) {
+        Price price,
+        FeedRelay feedRelay) {
 
     public MarketProperties {
         pinnedSymbols = pinnedSymbols == null ? List.of() : List.copyOf(pinnedSymbols);
         master = master == null ? new Master(null, null, null) : master;
         mock = mock == null ? new Mock(null, null, null, null) : mock;
         price = price == null ? new Price(null) : price;
+        feedRelay = feedRelay == null ? new FeedRelay(false, null, null, null, null) : feedRelay;
     }
 
     public boolean kis() {
@@ -76,6 +79,32 @@ public record MarketProperties(
 
         public Price {
             maxAge = maxAge == null ? Duration.ofSeconds(5) : maxAge;
+        }
+    }
+
+    /**
+     * corebank trading-service로 시세를 중계한다 (CLAUDE.md §65, ADR-0021).
+     *
+     * <p>trading-service와 tier가 달라 Valkey · Kafka를 나눠 쓸 때만 켠다.
+     * 로컬은 같은 Valkey · Kafka라 끈다.
+     *
+     * @param enabled        켜면 {@code market.price.updated}를 따로 소비해 corebank로 보낸다
+     * @param url            받는 주소. 예: {@code https://trading.internal.cloudnetwork.kr/internal/market/prices}
+     * @param secret         서명 키. trading-service와 같은 값이다 (Secrets Manager wts/channel/market-feed)
+     * @param connectTimeout 연결 대기 상한. 시세는 다음 것이 곧 오므로 짧게 둔다
+     * @param readTimeout    응답 대기 상한
+     */
+    public record FeedRelay(boolean enabled, String url, String secret,
+            Duration connectTimeout, Duration readTimeout) {
+
+        public FeedRelay {
+            connectTimeout = connectTimeout == null ? Duration.ofSeconds(2) : connectTimeout;
+            readTimeout = readTimeout == null ? Duration.ofSeconds(3) : readTimeout;
+            // 켰는데 주소나 키가 없으면 조용히 아무 데도 못 보낸다. 기동에서 막는다 (§52).
+            if (enabled && (url == null || url.isBlank() || secret == null || secret.isBlank())) {
+                throw new IllegalArgumentException(
+                        "market.feed-relay.enabled=true 인데 MARKET_FEED_RELAY_URL 또는 MARKET_FEED_SECRET 이 비어 있다.");
+            }
         }
     }
 }

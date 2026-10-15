@@ -2925,3 +2925,131 @@ Valkey는 tier마다 하나씩 둔다. market-service · trading-service는 repl
 channel → corebank는 internal ALB 443 하나뿐이고 Kafka는 tier를 넘지 못한다. 그래서 1단계에서는
 trading-service가 시세를 받지 못하고, gateway에서도 닿지 않는다. 인증서 · ALB · 시세 중계 ·
 market ← trading 수요 신호(§57.2) 방향은 상세 설계를 이 문서 끝에 새 번호로 덧붙인 뒤 구현한다 (ADR-0020, §63).
+
+> **→** gateway → trading은 trader-terraform-sessac ADR-0046(develop internal ALB)으로 풀었다. 시세 중계는 §65 (ADR-0021).
+> 수요 신호는 §65.6의 방향 규칙을 따라 Phase 8-2 상세 설계에서 정한다.
+
+---
+
+# 65. tier 간 시세 중계 – channel → corebank
+
+> §64.4의 2단계 중 "trading이 체결 판정에 쓰는 시세"를 푼다. ADR-0021.
+> 로컬(docker compose)은 한 tier라 이 기능을 끈다. 켜지 않으면 동작이 지금과 같다.
+
+## 65.1 문제
+
+```text
+- trading-service(corebank)는 최신 시세를 자기 tier의 Valkey(ADR-0008)에서, 시세 이벤트를 자기 tier의 Kafka에서 읽는다.
+- 시세를 만드는 market-service는 channel에 있다. Valkey · Kafka는 tier마다 따로다.
+- 네트워크: channel → corebank는 develop internal ALB 443(HTTPS) 하나뿐이다. corebank → channel은 막혀 있다.
+  Kafka(TCP)는 tier를 넘지 못하고, corebank에는 인터넷이 없어 KIS를 직접 받을 수 없다.
+→ corebank에 시세가 없어 모든 주문이 MARKET_PRICE_UNAVAILABLE로 거절된다.
+```
+
+## 65.2 원칙
+
+증권사의 시세 분배 구조와 망분리 관행을 따른다 (조사 출처는 ADR-0021).
+
+```text
+1. 시세는 수신 구역(channel) → 거래 구역(corebank) 한 방향으로 흐른다.
+2. 연결은 언제나 channel이 연다. corebank는 바깥으로 세션을 열지 않는다.
+3. 경계의 통로는 하나다. 이미 있는 ALB 443에 경로 하나를 더하고, 요청마다 서명으로 인증한다.
+4. 받는 쪽은 수신 게이트웨이가 받아 자기 tier의 Valkey · Kafka에 다시 낸다.
+   그래서 trading의 기존 읽기 경로(ADR-0008, §12, §58)는 바뀌지 않는다.
+5. 시세는 다시 만들 수 있다 (§18). 유실보다 최신성이 중요하다. 밀린 것은 버리고 종목별 최신값만 보낸다.
+```
+
+## 65.3 흐름
+
+```text
+[channel]  market-service
+             시세 수신 → Valkey · Kafka market.price.updated (지금과 같다)
+             feed relay (신규, market.feed-relay.enabled=true 일 때만)
+               consumer group market-service-feed-relay 로 market.price.updated 를 묶어서 소비
+               묶음 안에서 종목별 마지막 이벤트만 남기고, max-age(§11)를 넘긴 것은 버린다
+               → HTTPS POST https://trading.internal.cloudnetwork.kr/internal/market/prices  (서명 헤더)
+               실패하면 로그만 남기고 그 묶음을 버린다. 재시도하지 않는다. 다음 시세가 온다.
+
+[corebank] trading-service
+             market feed 수신 (신규, trading.market-feed.enabled=true 일 때만)
+               서명 · 시각 검증 → 이벤트마다
+                 형식 검사 (eventType, 종목코드, 가격 > 0, timestamp)
+                 max-age 를 넘겼으면 버린다
+                 Valkey market:price:{symbol} 의 timestamp 보다 새롭지 않으면 버린다
+                 Valkey market:price:{symbol}       ← market-service 와 같은 형식으로 쓴다
+                 Kafka  market.price.updated key=symbol ← 받은 이벤트 봉투를 그대로 낸다 (eventId · traceId 유지)
+             이후는 지금과 같다
+               시장가 주문 → ValkeyMarketPriceQuery
+               미체결 지정가 → MarketPriceUpdatedConsumer (Phase 8 엔진도 같은 토픽, §58.4)
+```
+
+## 65.4 계약
+
+```text
+POST /internal/market/prices
+  Content-Type      application/json
+  X-Wts-Signature   t=<epoch seconds>,v1=<base64url(HMAC-SHA256(key, "<t>." + 본문 바이트))>
+  본문              { "events": [ <market.price.updated 봉투 (§16)>, ... ] }   최대 500개
+  응답 200          { "accepted": n, "skipped": m }
+       401          서명이 없거나 틀렸거나, t 가 허용 오차(trading.market-feed.max-clock-skew, 기본 60초) 밖
+       400          본문이 JSON 이 아니거나 events 가 없다. 이벤트 하나가 깨진 것은 skipped 로 센다
+  경로              /internal/** 는 gateway 가 라우팅하지 않는다(/api/**, /ws/** 만). 공개 API(§24)가 아니므로
+                    OpenAPI 명세에서 뺀다 (@Hidden).
+  키                 Secrets Manager wts/channel/market-feed 와 wts/corebank/market-feed (같은 값),
+                    JSON 키 MARKET_FEED_SECRET. 두 앱이 configtree 로 읽는다 (ADR-0020 7항).
+  재전송             허용 오차 안에서 같은 요청을 다시 보내도 해가 없다. Valkey 는 더 새로운 값만 쓰고,
+                    Kafka 중복은 주문 상태 머신이 막는다 (ADR-0011).
+```
+
+서명은 `common`의 `FeedSignature`가 만든다 (MockAuthToken과 같은 HmacSHA256 · 상수 시간 비교).
+
+## 65.5 설정
+
+| 서비스 | 속성 | 환경변수 | 기본 |
+|---|---|---|---|
+| market | `market.feed-relay.enabled` | `MARKET_FEED_RELAY_ENABLED` | `false` |
+| market | `market.feed-relay.url` | `MARKET_FEED_RELAY_URL` | (켜면 필수) |
+| market | `market.feed-relay.secret` | `MARKET_FEED_SECRET` | (켜면 필수) |
+| market | `market.feed-relay.connect-timeout` · `read-timeout` | | 2초 · 3초 |
+| trading | `trading.market-feed.enabled` | `TRADING_MARKET_FEED_ENABLED` | `false` |
+| trading | `trading.market-feed.secret` | `MARKET_FEED_SECRET` | (켜면 필수) |
+| trading | `trading.market-feed.max-clock-skew` | | 60초 |
+
+켰는데 URL · 키가 비어 있으면 기동을 막는다 (KIS 자격증명과 같은 방식, §52).
+묶음 크기는 Kafka fetch 설정(`fetch.max.wait.ms` 300ms)으로 정한다. 타이머를 따로 두지 않는다.
+
+## 65.6 방향 규칙과 이후
+
+```text
+- tier 경계를 넘는 연결은 언제나 channel 이 연다. corebank 에서 channel 로 가는 길을 열지 않는다.
+- Phase 8-2의 수요 신호(order.accepted · order.open.snapshot → market)도 이 규칙을 따른다.
+  channel 이 같은 ALB 로 corebank 에서 당겨 온다 (예: GET /internal/orders/open-snapshot). 상세는 Phase 8-2 설계에서 정한다.
+- 호가(market:orderbook)는 중계하지 않는다. trading 이 쓰지 않는다. 호가 기반 체결(Phase 9)에서 다시 정한다.
+- 로컬과 한 클러스터 배포에서는 두 서비스가 같은 Valkey · Kafka 를 쓰므로 끈다.
+```
+
+## 65.7 테스트
+
+```text
+단위
+- FeedSignature: 서명 · 검증, 본문 1바이트 변조, 시각 허용 오차 경계, 형식이 깨진 헤더
+- relay: 종목별 마지막 값만 남는다, 오래된 시세를 버린다, 전송 실패가 예외로 새지 않는다
+- relay HTTP 클라이언트: 서명 헤더와 본문 (MockRestServiceServer)
+통합 (trading, Testcontainers)
+- 서명한 요청 → Valkey 에 시세 → 시장가 주문 체결
+- 서명한 요청 → Kafka market.price.updated → 미체결 지정가 체결
+- 틀린 서명 401, 오래된 시세 · 더 오래된 timestamp 는 skipped 이고 Valkey 가 바뀌지 않는다
+```
+
+## 65.8 인프라 (다른 저장소)
+
+```text
+trader-terraform-sessac  develop ALB 리스너 규칙에 /internal/market/prices 추가 (같은 대상 그룹 8082)
+                         시크릿 wts/<tier>/market-feed 와 market · trading Pod Identity 권한 (ADR-0047 방식)
+trader-gitops            market: MARKET_FEED_RELAY_ENABLED=true, MARKET_FEED_RELAY_URL, SecretProviderClass 에 market-feed
+                         trading: TRADING_MARKET_FEED_ENABLED=true, SecretProviderClass 에 market-feed
+                         런북: 값 넣기 · 확인 · 9절 2행 해결 표시
+```
+
+남는 위험: channel 안의 다른 파드도 이 ALB 경로에 닿는다. 서명 키가 없으면 시세를 넣을 수 없지만,
+키가 새면 가짜 시세로 체결을 일으킬 수 있다. 키는 두 앱만 읽는다 (Pod Identity). 교체 절차는 런북에 둔다.

@@ -161,7 +161,8 @@ class MockMarketDataAdapterTest {
                         new BigDecimal(min),
                         new BigDecimal(max),
                         seed),
-                new MarketProperties.Price(Duration.ofSeconds(5)));
+                new MarketProperties.Price(Duration.ofSeconds(5)),
+                null);
 
         StockRepository stocks = mock(StockRepository.class);
         when(stocks.findBySymbol(SAMSUNG)).thenReturn(Optional.of(
