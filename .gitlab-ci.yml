@@ -6,18 +6,15 @@
 #         ↓
 #   test         프론트엔드 빌드 + 백엔드 컴파일 · 단위 테스트
 #         ↓
-#   build        백엔드 jar
-#         ↓
 #   integration  Testcontainers (MySQL · Kafka · Valkey)
 #         ↓
-#   docker       컨테이너 이미지 빌드
+#   docker       서비스별 컨테이너 이미지 빌드 (jar 는 서비스마다 이미지 안에서 만든다, ADR-0019)
 #
 # 이미지 레지스트리 푸시, SonarQube, Argo CD는 MVP 이후다 (§38).
 
 stages:
   - lint
   - test
-  - build
   - integration
   - docker
 
@@ -92,18 +89,6 @@ backend:unit-test:
         - backend/*/build/test-results/test/TEST-*.xml
     expire_in: 1 week
 
-# ── build ───────────────────────────────────────────────
-
-backend:assemble:
-  extends: .backend
-  stage: build
-  script:
-    - ./gradlew assemble
-  artifacts:
-    paths:
-      - backend/*/build/libs/*-SNAPSHOT.jar
-    expire_in: 1 day
-
 # ── integration ─────────────────────────────────────────
 
 backend:integration-test:
@@ -133,8 +118,12 @@ backend:integration-test:
     expire_in: 1 week
 
 # ── docker ──────────────────────────────────────────────
+#
+# 서비스마다 job 이 따로다. 한 서비스의 Dockerfile 이 깨져도 어느 것인지 바로 보이고,
+# 서로 병렬로 돈다. jar 는 이미지 안에서 Gradle 로 만든다 (ADR-0019).
+# 앞 단계에서 이미 검증한 같은 소스라, integration 이 통과한 뒤에만 시작한다.
 
-docker:build:
+.docker:
   stage: docker
   image: docker:27-cli
   services:
@@ -144,18 +133,25 @@ docker:build:
     DOCKER_HOST: "tcp://docker:2375"
     DOCKER_TLS_CERTDIR: ""
   needs:
-    # jar 를 앞 단계에서 받아 쓴다. 이미지 안에서 다시 빌드하지 않는다.
-    - job: backend:assemble
-      artifacts: true
     - job: backend:integration-test
+      artifacts: false
+    - job: frontend:build
+      artifacts: false
+
+docker:backend:
+  extends: .docker
+  parallel:
+    matrix:
+      - SERVICE: [gateway-service, market-service, trading-service, user-service]
   script:
-    - |
-      for service in gateway-service market-service trading-service user-service; do
-        echo "▸ wts/${service}"
-        docker build -f backend/Dockerfile --build-arg "SERVICE=${service}" \
-          -t "wts/${service}:${CI_COMMIT_SHORT_SHA}" backend
-      done
+    - echo "▸ wts/${SERVICE}"
+    - docker build -f "backend/${SERVICE}/Dockerfile" -t "wts/${SERVICE}:${CI_COMMIT_SHORT_SHA}" backend
+    # 레지스트리 푸시는 CI 가 아니라 infra/scripts/push-images.sh 로 한다. 여기서는 Dockerfile 이 깨지지 않았는지만 본다.
+    - docker images "wts/${SERVICE}"
+
+docker:frontend:
+  extends: .docker
+  script:
     - echo "▸ wts/frontend"
     - docker build -t "wts/frontend:${CI_COMMIT_SHORT_SHA}" frontend
-    # 레지스트리 푸시는 MVP 이후다 (§38). 여기서는 Dockerfile 이 깨지지 않았는지만 본다.
-    - docker images "wts/*"
+    - docker images "wts/frontend"

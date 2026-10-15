@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
-# 배포용 컨테이너 이미지를 만든다. (CLAUDE.md §47 Phase 7)
+# 배포용 컨테이너 이미지를 만든다. (CLAUDE.md §47 Phase 7, ADR-0019)
 #
 #   ./infra/scripts/build-images.sh [태그]
 #
-# jar를 먼저 만든 뒤 이미지에 담는다. 이미지 안에서 Gradle을 돌리지 않는다.
+# 서비스마다 backend/<서비스>/Dockerfile 이 있고, jar 는 이미지 안에서 Gradle 로 만든다.
+# 로컬에 JDK · Gradle 빌드 산출물이 없어도 된다.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAG="${1:-local}"
 SERVICES=(gateway-service market-service trading-service user-service)
 
-echo "▸ 백엔드 jar 빌드"
-(cd "$ROOT/backend" && ./gradlew assemble -q)
-
 for service in "${SERVICES[@]}"; do
     echo "▸ wts/${service}:${TAG}"
     docker build -q \
-        -f "$ROOT/backend/Dockerfile" \
-        --build-arg "SERVICE=${service}" \
+        -f "$ROOT/backend/${service}/Dockerfile" \
         -t "wts/${service}:${TAG}" \
         "$ROOT/backend" > /dev/null
 done
@@ -26,4 +23,4 @@ echo "▸ wts/frontend:${TAG}"
 docker build -q -t "wts/frontend:${TAG}" "$ROOT/frontend" > /dev/null
 
 echo
-docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}' | grep "^wts/.*:${TAG}$" | sort
+docker images --filter "reference=wts/*:${TAG}" --format '{{.Repository}}:{{.Tag}}\t{{.Size}}' | sort

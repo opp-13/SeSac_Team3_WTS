@@ -5,7 +5,8 @@
 # 프론트엔드는 빌드 결과가 정적 파일이다. nginx가 서빙하면서 /api 와 /ws 를 Gateway로 넘긴다.
 # 개발 중 Vite 개발 서버가 하던 역할과 같다.
 
-FROM node:22-alpine AS build
+# 정적 파일은 아키텍처와 무관하다. 멀티 아키텍처 빌드에서도 이 단계는 네이티브로 한 번만 돈다.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 
 # 의존성 설치를 소스 변경과 분리해 레이어 캐시를 살린다.

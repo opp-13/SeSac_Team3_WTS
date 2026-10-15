@@ -1,5 +1,13 @@
+# 이미지 안에서 Gradle 로 빌드한다 (ADR-0019). 소스는 보내고 로컬 산출물 · 캐시 · 테스트는 뺀다.
+#
+# 주의: 패턴을 **/out, **/build 로 쓰지 않는다. 헥사고날 구조의 소스 패키지 adapter/out/ 까지 걸러져서
+# 컴파일은 되지만 영속성 어댑터가 jar 에서 빠진다 (기동 때 UserRepository 빈이 없다고 실패한다).
+# 산출물 디렉터리는 모듈 최상위에만 있다.
 .gradle
-**/build/tmp
-**/build/classes
-**/build/resources
-**/src
+build
+out
+*/build
+*/out
+**/src/test
+**/*.iml
+.idea

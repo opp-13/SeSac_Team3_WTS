@@ -18,16 +18,15 @@ Push / Merge Request
                backend:unit-test        ./gradlew test          152개
       │
       ▼
- build         backend:assemble         jar 4개
-      │
-      ▼
  integration   backend:integration-test ./gradlew integrationTest  74개
       │
       ▼
- docker        docker:build             이미지 5개
+ docker        docker:backend           서비스 4개를 병렬로 (matrix)
+               docker:frontend          이미지 1개
 ```
 
-§38이 제시한 스테이지 이름(`lint / test / build / integration / docker`)을 그대로 쓴다.
+> **갱신 (ADR-0019):** `build` 단계(`backend:assemble`)를 없앴다. jar는 서비스마다 이미지 안에서 만든다.
+> §38이 제시한 스테이지 이름 중 `build`는 쓰지 않는다.
 
 ## 단위 테스트와 통합 테스트를 나눈 방법
 
@@ -59,25 +58,28 @@ tasks.named('check')          { dependsOn tasks.named('integrationTest') }
 
 ## 컨테이너 이미지
 
-### 백엔드 — `backend/Dockerfile` 하나로 4개 서비스
+### 백엔드 — 서비스마다 `backend/<서비스>/Dockerfile` (ADR-0019)
 
 ```bash
-docker build -f backend/Dockerfile --build-arg SERVICE=gateway-service -t wts/gateway-service backend
+docker build -f backend/gateway-service/Dockerfile -t wts/gateway-service backend
 ```
 
-서비스마다 Dockerfile을 두면 같은 내용이 네 벌이 되고, 한 곳만 고치는 사고가 난다.
-서비스 이름만 빌드 인자로 받는다.
-
-**이미지 안에서 Gradle을 돌리지 않는다.** CI가 `build` 단계에서 이미 jar를 만들었고,
-`docker` 단계는 그 산출물을 받아 담기만 한다. 같은 코드를 두 번 빌드할 이유가 없다.
+> **갱신 (ADR-0019):** 처음에는 `backend/Dockerfile` 하나에 `SERVICE` 빌드 인자를 받았고,
+> 이미지 안에서 Gradle을 돌리지 않았다(CI가 만든 jar를 담기만 했다). 지금은 반대다.
+> 서비스마다 Dockerfile이 따로 있는 멀티스테이지이고, jar를 이미지 안에서 Gradle로 만든다.
+> 서비스를 channel · corebank 두 클러스터에 나눠 배포하게 되어, 서비스별로 빌드 · 태그 · 배포할 수 있어야 하기 때문이다.
 
 | 결정 | 이유 |
 |---|---|
-| `eclipse-temurin:21-jre-alpine` | JDK가 아니라 JRE. 실행에 컴파일러가 필요 없다 |
-| 비-root 사용자 | 컨테이너 안에서 root로 돌 이유가 없다 |
+| 멀티스테이지 (`eclipse-temurin:21-jdk` → `21-jre-alpine`) | 실행 이미지에는 JRE만 남는다. 컴파일러와 Gradle 캐시는 빌드 단계에만 있다 |
+| 빌드 단계는 `--platform=$BUILDPLATFORM` | jar는 아키텍처와 무관하다. arm64 + amd64 멀티 아키텍처 빌드에서도 Gradle은 한 번만 돈다 |
+| 비-root, **숫자 UID 10001** | 쿠버네티스 `runAsNonRoot`는 사용자 이름이 아니라 숫자 UID로만 검증한다 |
 | `-XX:MaxRAMPercentage=75` | 컨테이너 메모리 한도를 JVM이 인식한다 (§54) |
 | `exec java …` | JVM이 PID 1이 되어 정지 신호를 직접 받는다. Graceful Shutdown이 동작한다 (§54) |
 | `TZ=UTC` | 저장은 UTC다 (§43) |
+
+`settings.gradle`이 서비스 4개를 모두 include하므로 소스는 통째로 복사한다(`backend/.dockerignore`가 빌드 산출물 · 테스트를 뺀다).
+그래서 한 서비스를 고쳐도 다른 서비스의 Gradle 레이어 캐시가 무효화된다. 빌드 시간보다 단순함을 택했다.
 
 ### 프론트엔드 — `frontend/Dockerfile` + `nginx.conf`
 
