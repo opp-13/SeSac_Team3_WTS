@@ -6,6 +6,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -15,26 +16,39 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import org.springframework.kafka.support.serializer.JsonSerializer;
 import org.springframework.web.client.ResourceAccessException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.team.wts.common.event.DomainEvent;
+import com.team.wts.common.event.KafkaTopics;
 import com.team.wts.market.config.MarketProperties;
 import com.team.wts.market.feed.adapter.out.http.CorebankFeedClient;
+import com.team.wts.market.quote.domain.MarketPrice;
+import com.team.wts.market.quote.event.MarketPriceUpdated;
 
 class MarketFeedRelayTest {
 
     private static final Instant NOW = Instant.parse("2026-10-15T01:00:00Z");
 
     private final CorebankFeedClient client = mock(CorebankFeedClient.class);
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    /** 운영의 Spring Boot ObjectMapper와 같은 설정(JavaTimeModule 등). */
+    private final ObjectMapper objectMapper = Jackson2ObjectMapperBuilder.json().build();
     private final MarketFeedRelay relay = new MarketFeedRelay(client, objectMapper,
             new MarketProperties("mock", List.of(), null, null,
                     new MarketProperties.Price(Duration.ofSeconds(5)), null),
             Clock.fixed(NOW, ZoneOffset.UTC));
+
+    @BeforeEach
+    void corebankAcceptsEverything() {
+        when(client.send(anyString())).thenReturn(new CorebankFeedClient.Receipt(1, 0));
+    }
 
     @Test
     @DisplayName("묶음 안에서 종목마다 가장 새로운 이벤트 하나만, 받은 문자열 그대로 보낸다")
@@ -51,6 +65,34 @@ class MarketFeedRelayTest {
         events.forEach(e -> sentEvents.add(e.toString()));
         assertThat(sentEvents).containsExactlyInAnyOrder(
                 objectMapper.readTree(samsungNew).toString(), objectMapper.readTree(hynix).toString());
+    }
+
+    /**
+     * 계약 테스트: 운영 발행자와 같은 직렬화기로 만든 이벤트를 넣는다.
+     *
+     * <p>market-service는 {@code value-serializer: JsonSerializer}를 설정으로 지정한다. Kafka가 기본 생성자로
+     * 만들므로 Spring Boot ObjectMapper가 아니라 Spring Kafka 기본 매퍼를 쓰고, 그 매퍼는 시각을
+     * 숫자(epoch 초.나노)로 쓴다. 손으로 쓴 ISO 문자열 픽스처만으로는 이 형식을 놓친다 (2026-10-16).
+     */
+    @Test
+    @DisplayName("운영 직렬화기(JsonSerializer 기본)가 만든 이벤트도 보낸다 - 시각이 숫자로 온다")
+    void relaysEventsWrittenByTheProductionSerializer() throws Exception {
+        MarketPrice price = new MarketPrice("005930", new java.math.BigDecimal("214000"),
+                new java.math.BigDecimal("210000"), 916095L, NOW.minusMillis(1500).plusNanos(123_456_789));
+        DomainEvent<MarketPriceUpdated> event = DomainEvent.of(KafkaTopics.MARKET_PRICE_UPDATED,
+                price.symbol(), null, MarketPriceUpdated.from(price));
+        String json;
+        try (JsonSerializer<Object> serializer = new JsonSerializer<>()) {
+            json = new String(serializer.serialize(KafkaTopics.MARKET_PRICE_UPDATED, event),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        }
+        assertThat(objectMapper.readTree(json).path("payload").path("timestamp").isNumber())
+                .as("운영 직렬화기는 시각을 숫자로 쓴다: %s", json).isTrue();
+
+        int sent = relay.relay(List.of(json));
+
+        assertThat(sent).isEqualTo(1);
+        assertThat(sentBody()).contains(json);
     }
 
     @Test

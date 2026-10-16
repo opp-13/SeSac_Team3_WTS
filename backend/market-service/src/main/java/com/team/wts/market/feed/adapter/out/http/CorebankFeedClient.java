@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.team.wts.common.feed.FeedSignature;
 import com.team.wts.market.config.MarketProperties;
 
@@ -40,15 +41,24 @@ public class CorebankFeedClient {
         this.url = relay.url();
     }
 
-    /** @throws RestClientException 연결 실패, 시간 초과, 2xx가 아닌 응답 */
-    public void send(String body) {
+    /**
+     * @return 받는 쪽이 반영한 건수와 건너뛴 건수 (§65.4 응답). 본문이 없으면 0 · 0
+     * @throws RestClientException 연결 실패, 시간 초과, 2xx가 아닌 응답
+     */
+    public Receipt send(String body) {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        rest.post()
+        Receipt receipt = rest.post()
                 .uri(url)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(FeedSignature.HEADER, signature.sign(bytes, clock.instant()))
                 .body(bytes)
                 .retrieve()
-                .toBodilessEntity();
+                .body(Receipt.class);
+        return receipt == null ? new Receipt(0, 0) : receipt;
+    }
+
+    /** trading-service {@code MarketFeedService.Result}와 같은 JSON. 클래스는 공유하지 않는다. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Receipt(int accepted, int skipped) {
     }
 }

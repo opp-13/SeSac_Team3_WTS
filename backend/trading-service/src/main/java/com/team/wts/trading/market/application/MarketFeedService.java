@@ -2,8 +2,8 @@ package com.team.wts.trading.market.application;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,6 +35,11 @@ import com.team.wts.trading.market.domain.MarketPriceQuery;
  *
  * <p>"더 새로운 값만" 규칙 덕분에 같은 요청이 다시 와도(재전송 · 중복) 해가 없다.
  * 비교와 쓰기가 원자적이지 않지만, 보내는 쪽은 market-service 한 대(replica 1)가 순서대로 보낸다.
+ *
+ * <p>시각은 Jackson으로 읽는다. 이벤트의 시각은 숫자(epoch 초.나노)로 온다 - 발행자가 Spring Kafka 기본 매퍼를 쓴다.
+ * ISO 문자열도 받는다. Valkey에는 market-service와 같은 ISO 문자열로 쓴다.
+ *
+ * <p>건너뛴 이유는 1분마다 한 줄로 요약한다. 요청마다 로그를 남기지 않는다.
  */
 @Service
 @ConditionalOnProperty(prefix = "trading.market-feed", name = "enabled", havingValue = "true")
@@ -42,12 +47,19 @@ public class MarketFeedService {
 
     private static final Logger log = LoggerFactory.getLogger(MarketFeedService.class);
 
+    private static final Duration SUMMARY_INTERVAL = Duration.ofMinutes(1);
+
     private final MarketPriceQuery prices;
     private final ValkeyMarketPriceMirror cache;
     private final KafkaMarketPriceRepublisher events;
     private final MarketPriceProperties priceProperties;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+
+    // HTTP 요청 스레드 여럿이 함께 쓴다. 요청이 초당 몇 건이라 잠금으로 충분하다.
+    private final Object statsLock = new Object();
+    private Stats stats = new Stats();
+    private Instant lastSummaryAt;
 
     public MarketFeedService(MarketPriceQuery prices, ValkeyMarketPriceMirror cache,
             KafkaMarketPriceRepublisher events, MarketPriceProperties priceProperties,
@@ -58,72 +70,77 @@ public class MarketFeedService {
         this.priceProperties = priceProperties;
         this.objectMapper = objectMapper;
         this.clock = clock;
+        this.lastSummaryAt = clock.instant();
     }
 
     public Result accept(List<JsonNode> received) {
-        int accepted = 0;
+        Stats batch = new Stats();
         for (JsonNode event : received) {
-            if (acceptOne(event)) {
-                accepted++;
-            }
+            batch.count(acceptOne(event));
         }
-        return new Result(accepted, received.size() - accepted);
+        record(batch);
+        return new Result(batch.accepted, received.size() - batch.accepted);
     }
 
-    private boolean acceptOne(JsonNode event) {
+    private Outcome acceptOne(JsonNode event) {
         Optional<Quote> parsed = parse(event);
         if (parsed.isEmpty()) {
-            log.warn("중계 시세 형식 오류, 건너뜀: eventId={}", event.path("eventId").asText(null));
-            return false;
+            return Outcome.MALFORMED;
         }
         Quote quote = parsed.get();
 
         // 밀려서 온 시세로 체결하지 않는다 (§11). 받는 쪽에서도 다시 본다.
         if (quote.timestamp().plus(priceProperties.maxAge()).isBefore(clock.instant())) {
-            return false;
+            return Outcome.STALE;
         }
         Optional<MarketPrice> current = prices.findLatest(quote.symbol());
         if (current.isPresent() && !quote.timestamp().isAfter(current.get().timestamp())) {
-            return false;
+            return Outcome.NOT_NEWER;
         }
 
-        if (!cache.save(quote.symbol(), toCacheJson(event.path("payload")))) {
-            return false;
+        if (!cache.save(quote.symbol(), toCacheJson(event.path("payload"), quote.timestamp()))) {
+            return Outcome.WRITE_FAILED;
         }
         events.publish(quote.symbol(), event.path("eventId").asText(null), toJson(event));
-        return true;
+        return Outcome.ACCEPTED;
     }
 
-    private static Optional<Quote> parse(JsonNode event) {
+    private Optional<Quote> parse(JsonNode event) {
         if (!KafkaTopics.MARKET_PRICE_UPDATED.equals(event.path("eventType").asText(null))) {
             return Optional.empty();
         }
         JsonNode payload = event.path("payload");
         String symbol = payload.path("symbol").asText(null);
         JsonNode price = payload.path("price");
+        JsonNode timestamp = payload.path("timestamp");
         if (!StockSymbol.isValid(symbol) || !price.isNumber()
-                || price.decimalValue().compareTo(BigDecimal.ZERO) <= 0) {
+                || price.decimalValue().compareTo(BigDecimal.ZERO) <= 0
+                || timestamp.isMissingNode() || timestamp.isNull()) {
             return Optional.empty();
         }
         try {
-            return Optional.of(new Quote(symbol, Instant.parse(payload.path("timestamp").asText(""))));
-        } catch (DateTimeParseException e) {
+            // 숫자(epoch 초.나노)와 ISO 문자열을 모두 읽는다. MarketPriceUpdatedConsumer와 같은 규칙이다.
+            Instant at = objectMapper.treeToValue(timestamp, Instant.class);
+            return at == null ? Optional.empty() : Optional.of(new Quote(symbol, at));
+        } catch (JsonProcessingException | RuntimeException e) {
             return Optional.empty();
         }
     }
 
     /**
-     * market-service {@code ValkeyQuoteCache}가 쓰는 값과 같은 필드만 남긴다
+     * market-service {@code ValkeyQuoteCache}가 쓰는 값과 같은 모양으로 만든다
      * ({@code symbol, price, previousClose, volume, timestamp}). 이벤트 payload에만 있는
-     * change · changeRate는 캐시 값에 없다.
+     * change · changeRate는 캐시 값에 없다. timestamp는 이 서비스의 ObjectMapper가 ISO 문자열로 쓴다
+     * (market-service의 Valkey 값과 같다). 이벤트에는 숫자로 온다.
      */
-    private String toCacheJson(JsonNode payload) {
+    private String toCacheJson(JsonNode payload, Instant timestamp) {
         ObjectNode value = objectMapper.createObjectNode();
-        for (String field : List.of("symbol", "price", "previousClose", "volume", "timestamp")) {
+        for (String field : List.of("symbol", "price", "previousClose", "volume")) {
             if (payload.has(field)) {
                 value.set(field, payload.get(field));
             }
         }
+        value.set("timestamp", objectMapper.valueToTree(timestamp));
         return toJson(value);
     }
 
@@ -133,6 +150,55 @@ public class MarketFeedService {
         } catch (JsonProcessingException e) {
             // 방금 파싱한 트리라 실패할 수 없다. 오면 버그다.
             throw new IllegalStateException("JSON 직렬화 실패", e);
+        }
+    }
+
+    private void record(Stats batch) {
+        Stats summary = null;
+        Instant now = clock.instant();
+        synchronized (statsLock) {
+            stats.add(batch);
+            if (!lastSummaryAt.plus(SUMMARY_INTERVAL).isAfter(now)) {
+                summary = stats;
+                stats = new Stats();
+                lastSummaryAt = now;
+            }
+        }
+        if (summary != null && summary.total() > 0) {
+            log.info("중계 시세 수신: 반영 {}건, 건너뜀 오래됨 {}건 · 더 새롭지 않음 {}건 · 형식 {}건 · 쓰기 실패 {}건",
+                    summary.accepted, summary.stale, summary.notNewer, summary.malformed, summary.writeFailed);
+        }
+    }
+
+    private enum Outcome { ACCEPTED, STALE, NOT_NEWER, MALFORMED, WRITE_FAILED }
+
+    private static final class Stats {
+        int accepted;
+        int stale;
+        int notNewer;
+        int malformed;
+        int writeFailed;
+
+        void count(Outcome outcome) {
+            switch (outcome) {
+                case ACCEPTED -> accepted++;
+                case STALE -> stale++;
+                case NOT_NEWER -> notNewer++;
+                case MALFORMED -> malformed++;
+                case WRITE_FAILED -> writeFailed++;
+            }
+        }
+
+        void add(Stats other) {
+            accepted += other.accepted;
+            stale += other.stale;
+            notNewer += other.notNewer;
+            malformed += other.malformed;
+            writeFailed += other.writeFailed;
+        }
+
+        int total() {
+            return accepted + stale + notNewer + malformed + writeFailed;
         }
     }
 

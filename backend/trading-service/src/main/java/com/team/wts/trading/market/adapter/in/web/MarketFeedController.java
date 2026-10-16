@@ -12,8 +12,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.team.wts.common.error.DomainException;
 import com.team.wts.common.error.ErrorCode;
 import com.team.wts.common.feed.FeedSignature;
@@ -42,7 +45,7 @@ public class MarketFeedController {
     private final MarketFeedService service;
     private final FeedSignature signature;
     private final MarketFeedProperties properties;
-    private final ObjectMapper objectMapper;
+    private final ObjectReader reader;
     private final Clock clock;
 
     public MarketFeedController(MarketFeedService service, MarketFeedProperties properties,
@@ -50,7 +53,11 @@ public class MarketFeedController {
         this.service = service;
         this.signature = new FeedSignature(properties.secret());
         this.properties = properties;
-        this.objectMapper = objectMapper;
+        // 소수를 double로 읽지 않는다. 시각(epoch 초.나노) 같은 숫자를 받은 그대로 Kafka에 다시 내기 위해서다.
+        // double로 읽으면 나노초가 깎이고, 다시 쓸 때 지수 표기(1.79E9)로 바뀔 수 있다.
+        this.reader = objectMapper.reader()
+                .with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+                .with(JsonNodeFactory.withExactBigDecimals(true));
         this.clock = clock;
     }
 
@@ -67,7 +74,7 @@ public class MarketFeedController {
     private List<JsonNode> readEvents(byte[] body) {
         JsonNode events;
         try {
-            events = objectMapper.readTree(body).path("events");
+            events = reader.readTree(body).path("events");
         } catch (IOException e) {
             throw new DomainException(ErrorCode.VALIDATION_FAILED, "본문이 JSON이 아닙니다.");
         }

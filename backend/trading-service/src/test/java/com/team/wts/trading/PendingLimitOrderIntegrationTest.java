@@ -21,7 +21,6 @@ import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaTemplate;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.team.wts.common.event.KafkaTopics;
 
 import com.team.wts.trading.execution.domain.Execution;
@@ -72,8 +71,8 @@ class PendingLimitOrderIntegrationTest extends IntegrationTestBase {
 
         @Bean
         MarketEventFixture marketEventFixture(KafkaTemplate<String, String> kafka,
-                KafkaListenerEndpointRegistry registry, ObjectMapper objectMapper) {
-            return new MarketEventFixture(kafka, registry, objectMapper);
+                KafkaListenerEndpointRegistry registry) {
+            return new MarketEventFixture(kafka, registry);
         }
     }
 

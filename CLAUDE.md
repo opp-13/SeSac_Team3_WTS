@@ -2999,6 +2999,10 @@ POST /internal/market/prices
                     JSON 키 MARKET_FEED_SECRET. 두 앱이 configtree 로 읽는다 (ADR-0020 7항).
   재전송             허용 오차 안에서 같은 요청을 다시 보내도 해가 없다. Valkey 는 더 새로운 값만 쓰고,
                     Kafka 중복은 주문 상태 머신이 막는다 (ADR-0011).
+  시각 형식          이벤트의 occurredAt · payload.timestamp 는 숫자(epoch 초.나노)다. market-service 가
+                    value-serializer: JsonSerializer 를 설정으로 지정해 Spring Kafka 기본 매퍼를 쓰기 때문이다.
+                    읽는 쪽은 Jackson 으로 읽어 숫자와 ISO 문자열을 모두 받는다. Valkey 값은 ISO 문자열이다.
+                    테스트 이벤트는 발행자와 같은 매퍼로 만든다 (2026-10-16 장애, ADR-0021).
 ```
 
 서명은 `common`의 `FeedSignature`가 만든다 (MockAuthToken과 같은 HmacSHA256 · 상수 시간 비교).

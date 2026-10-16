@@ -13,6 +13,8 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.kafka.test.utils.ContainerTestUtils;
 
+import org.springframework.kafka.support.JacksonUtils;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.team.wts.common.event.DomainEvent;
 import com.team.wts.common.event.KafkaTopics;
@@ -22,18 +24,22 @@ import com.team.wts.common.event.KafkaTopics;
  *
  * <p>봉투 JSON을 여기서 직접 만든다. 두 서비스가 토픽의 JSON 형식으로만 연결돼 있다는 사실을
  * 테스트에서도 유지하기 위해서다. 형식이 어긋나면 이 테스트가 먼저 깨져야 한다.
+ *
+ * <p>직렬화는 market-service 발행자와 같은 매퍼로 한다. 발행자는 {@code value-serializer: JsonSerializer}라
+ * Spring Kafka 기본 매퍼({@link JacksonUtils#enhancedObjectMapper()})를 쓰고, 시각을 숫자(epoch 초.나노)로 쓴다.
+ * Spring Boot 매퍼로 만들면 ISO 문자열이 되어 운영과 다른 형식을 시험하게 된다 (2026-10-16, ADR-0021).
  */
 public class MarketEventFixture {
 
     private final KafkaTemplate<String, String> kafka;
     private final KafkaListenerEndpointRegistry registry;
-    private final ObjectMapper objectMapper;
 
-    public MarketEventFixture(KafkaTemplate<String, String> kafka,
-            KafkaListenerEndpointRegistry registry, ObjectMapper objectMapper) {
+    /** market-service 발행자와 같은 매퍼. */
+    public static final ObjectMapper PRODUCER_MAPPER = JacksonUtils.enhancedObjectMapper();
+
+    public MarketEventFixture(KafkaTemplate<String, String> kafka, KafkaListenerEndpointRegistry registry) {
         this.kafka = kafka;
         this.registry = registry;
-        this.objectMapper = objectMapper;
     }
 
     /**
@@ -64,7 +70,7 @@ public class MarketEventFixture {
                 KafkaTopics.MARKET_PRICE_UPDATED, symbol, UUID.randomUUID().toString(), payload);
         try {
             kafka.send(KafkaTopics.MARKET_PRICE_UPDATED, symbol,
-                    objectMapper.writeValueAsString(event)).get(10, TimeUnit.SECONDS);
+                    PRODUCER_MAPPER.writeValueAsString(event)).get(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);

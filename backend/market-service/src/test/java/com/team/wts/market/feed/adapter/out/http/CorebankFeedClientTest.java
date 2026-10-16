@@ -45,7 +45,10 @@ class CorebankFeedClientTest {
             contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
             signatureHeader.set(exchange.getRequestHeaders().getFirst(FeedSignature.HEADER));
             body.set(exchange.getRequestBody().readAllBytes());
-            exchange.sendResponseHeaders(status.get(), -1);
+            byte[] response = "{\"accepted\":2,\"skipped\":1}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status.get(), response.length);
+            exchange.getResponseBody().write(response);
             exchange.close();
         });
         server.start();
@@ -61,7 +64,9 @@ class CorebankFeedClientTest {
     void sendsSignedBody() {
         String json = "{\"events\":[{\"eventType\":\"market.price.updated\"}]}";
 
-        client().send(json);
+        CorebankFeedClient.Receipt receipt = client().send(json);
+
+        assertThat(receipt).isEqualTo(new CorebankFeedClient.Receipt(2, 1));
 
         assertThat(path.get()).isEqualTo("/internal/market/prices");
         assertThat(contentType.get()).startsWith("application/json");

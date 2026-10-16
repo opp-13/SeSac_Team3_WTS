@@ -74,6 +74,27 @@ EKS 검증 배포(ADR-0020)에서 market-service는 channel, trading-service는 
   - 키는 두 앱만 읽고, 교체 절차를 런북에 둔다.
   - X-User-Id 위조(trader-terraform-sessac ADR-0046)와 같은 계열의 위험이다.
 
+## 장애 기록 – 2026-10-16 첫 장중, 중계 0건
+
+**증상**
+- channel Valkey 시세는 갱신되는데 corebank Valkey가 비어 있었다.
+- 중계 실패 로그도 수신 쪽 로그도 없었다.
+
+**원인**
+- **시각이 숫자로 발행된다.** market-service는 `value-serializer: JsonSerializer`를 설정으로 지정한다. 그래서 Kafka가 기본 생성자로 직렬화기를 만들고, Spring Boot 매퍼가 아니라 Spring Kafka 기본 매퍼(`JacksonUtils.enhancedObjectMapper()`)를 쓴다. 이 매퍼는 `WRITE_DATES_AS_TIMESTAMPS`를 끄지 않아, 이벤트의 시각이 숫자(epoch 초.나노)로 나간다.
+- **relay는 ISO 문자열만 읽었다.** `Instant.parse(문자열)`로 읽어서 모든 이벤트를 형식 오류로 버렸다.
+- **버린 사실이 보이지 않았다.** 형식 오류는 debug 로그만 남겼다.
+
+**왜 테스트가 못 잡았나**
+- 테스트 이벤트를 ISO 문자열로 손으로 만들었다. 운영 형식과 달랐다.
+- 기존 소비자는 Jackson으로 `Instant`에 매핑하므로 두 형식을 모두 읽는다. 그래서 이 차이가 드러난 적이 없었다.
+
+**조치**
+- **읽기:** 두 서비스가 시각을 Jackson으로 읽는다. 숫자와 ISO를 모두 받는다.
+- **계약 테스트:** 운영과 같은 `JsonSerializer`로 만든 이벤트를 relay에 넣는 테스트를 추가했다. 통합 테스트의 이벤트도 발행자와 같은 매퍼로 만든다.
+- **로그:** relay와 수신 쪽 모두 버린 이유별 건수를 1분마다 INFO로 요약한다.
+- **교훈:** 서비스 간 계약을 시험할 때는 손으로 쓴 JSON이 아니라 실제 발행 경로의 직렬화기로 만든다.
+
 ## 출처
 
 - [토스증권의 미국 Option 시세 실시간 제공 사례 (AWS 기술 블로그)](https://aws.amazon.com/ko/blogs/tech/toss-securities-nasdaq-options-realtime-pipeline/)

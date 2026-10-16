@@ -4,8 +4,10 @@ import static com.team.wts.trading.support.MarketEventFixture.waitUntil;
 import static com.team.wts.trading.support.TradingApiClient.order;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -29,7 +31,8 @@ import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.TestPropertySource;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.team.wts.common.event.DomainEvent;
 import com.team.wts.common.event.KafkaTopics;
 import com.team.wts.common.feed.FeedSignature;
 import com.team.wts.trading.execution.domain.ExecutionRepository;
@@ -70,8 +73,8 @@ class MarketFeedIntegrationTest extends IntegrationTestBase {
 
         @Bean
         MarketEventFixture marketEventFixture(KafkaTemplate<String, String> kafka,
-                KafkaListenerEndpointRegistry registry, ObjectMapper objectMapper) {
-            return new MarketEventFixture(kafka, registry, objectMapper);
+                KafkaListenerEndpointRegistry registry) {
+            return new MarketEventFixture(kafka, registry);
         }
     }
 
@@ -104,14 +107,18 @@ class MarketFeedIntegrationTest extends IntegrationTestBase {
     @Test
     @DisplayName("서명한 시세를 받으면 Valkey에 market-service와 같은 형식으로 쓰고, 시장가 주문이 그 가격으로 체결된다")
     void relayedPriceFillsMarketOrder() {
-        ResponseEntity<Map<String, Object>> response = post(body(event(HYNIX, "201000", Instant.now())));
+        String sent = event(HYNIX, "201000", Instant.now());
+        assertThat(sent).as("발행자 형식: 시각이 숫자").containsPattern("\"timestamp\":\\d+\\.\\d+");
+        ResponseEntity<Map<String, Object>> response = post(body(sent));
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("accepted", 1).containsEntry("skipped", 0);
 
         String cached = redis.opsForValue().get("market:price:" + HYNIX);
         assertThat(cached).contains("\"symbol\":\"000660\"", "\"price\":201000", "\"previousClose\":200000",
-                "\"volume\":1234", "\"timestamp\":");
+                "\"volume\":1234");
+        // market-service의 Valkey 값과 같이 ISO 문자열로 쓴다 (이벤트에는 숫자로 왔다).
+        assertThat(cached).containsPattern("\"timestamp\":\"\\d{4}-\\d{2}-\\d{2}T[^\"]+Z\"");
         assertThat(cached).doesNotContain("changeRate");
 
         String user = UUID.randomUUID().toString();
@@ -134,6 +141,15 @@ class MarketFeedIntegrationTest extends IntegrationTestBase {
 
         waitUntil("중계 시세로 지정가 체결", () -> executions.findByOrderIdOrderByIdAsc(orderId).size() == 1);
         assertThat(executions.findByOrderIdOrderByIdAsc(orderId).get(0).price()).isEqualByComparingTo("198500");
+    }
+
+    @Test
+    @DisplayName("시각이 ISO 문자열인 이벤트도 받는다")
+    void acceptsIsoTimestamps() {
+        ResponseEntity<Map<String, Object>> response = post(body(isoEvent(HYNIX, "202000", Instant.now())));
+
+        assertThat(response.getBody()).containsEntry("accepted", 1);
+        assertThat(redis.opsForValue().get("market:price:" + HYNIX)).contains("\"price\":202000");
     }
 
     @Test
@@ -191,8 +207,31 @@ class MarketFeedIntegrationTest extends IntegrationTestBase {
         return "{\"events\":[" + String.join(",", events) + "]}";
     }
 
-    /** market-service {@code KafkaMarketEventPublisher}가 내는 봉투와 같은 모양. */
+    /**
+     * market-service {@code KafkaMarketEventPublisher}가 내는 봉투. 발행자와 같은 매퍼로 쓰므로 시각이 숫자(epoch 초.나노)다.
+     * 운영과 같은 형식이다 (MarketEventFixture 참고).
+     */
     private static String event(String symbol, String price, Instant timestamp) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("symbol", symbol);
+        payload.put("price", new BigDecimal(price));
+        payload.put("previousClose", new BigDecimal("200000"));
+        payload.put("change", BigDecimal.ZERO);
+        payload.put("changeRate", BigDecimal.ZERO);
+        payload.put("volume", 1234L);
+        payload.put("timestamp", timestamp);
+        DomainEvent<Map<String, Object>> event = new DomainEvent<>(UUID.randomUUID().toString(),
+                KafkaTopics.MARKET_PRICE_UPDATED, timestamp, UUID.randomUUID().toString(), symbol,
+                DomainEvent.CURRENT_VERSION, payload);
+        try {
+            return MarketEventFixture.PRODUCER_MAPPER.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** 시각을 ISO 문자열로 쓴 봉투. 다른 발행자가 Spring Boot 매퍼를 쓰는 경우다. */
+    private static String isoEvent(String symbol, String price, Instant timestamp) {
         return """
                 {"eventId":"%s","eventType":"market.price.updated","occurredAt":"%s","traceId":"%s",\
                 "aggregateId":"%s","version":1,"payload":{"symbol":"%s","price":%s,"previousClose":200000,\
