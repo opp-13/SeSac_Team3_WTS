@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Phase 0 완료조건 검증: 인프라와 4개 서비스가 모두 정상인지 확인한다. (CLAUDE.md §47)
+# Phase 0 완료조건 검증: 인프라와 백엔드 서비스(5개, market-ingest 포함)가 모두 정상인지 확인한다. (CLAUDE.md §47, §66)
 # 서비스가 뜰 때까지 기다렸다가 결과를 출력하고, 하나라도 실패하면 1로 종료한다.
 
 set -uo pipefail

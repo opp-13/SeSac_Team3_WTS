@@ -34,7 +34,8 @@ public class MarketPriceFixture {
         redis.opsForValue().set(PRICE_KEY_PREFIX + symbol, json);
     }
 
+    /** 시세와 중계 순번 키(§66.5)를 함께 지운다. 순번이 남으면 다음 테스트의 중계 시세가 "더 새롭지 않음"이 된다. */
     public void clear(String symbol) {
-        redis.delete(PRICE_KEY_PREFIX + symbol);
+        redis.delete(java.util.List.of(PRICE_KEY_PREFIX + symbol, "market:price:seq:" + symbol));
     }
 }

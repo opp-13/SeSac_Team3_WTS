@@ -40,7 +40,7 @@ docker compose ps
 # wts-valkey   Up (healthy)
 ```
 
-### 4. 백엔드 4개 서비스 기동
+### 4. 백엔드 서비스 기동 (5개, 시세는 market-ingest + market-service)
 
 ```bash
 ./infra/scripts/run-backend.sh
@@ -221,10 +221,12 @@ docker compose --profile tools up -d
 │   ├── Dockerfile            빌드 → nginx 정적 서빙
 │   └── nginx.conf            SPA 라우팅 + Gateway 프록시
 ├── backend/                  Gradle 멀티프로젝트
-│   ├── Dockerfile            4개 서비스 공용 (SERVICE 빌드 인자)
+│   ├── <서비스>/Dockerfile   서비스마다 하나 (멀티스테이지, ADR-0019)
 │   ├── common/               인증 토큰 · 공통 헤더 · 에러 응답
 │   ├── gateway-service/      클라이언트 단일 진입점 (WebFlux)
-│   ├── market-service/       시세 수집 · 캐시 · 이벤트 발행 · 1분봉 · WebSocket
+│   ├── market-core/          시세 도메인 · Valkey 캐시 · 종목/1분봉 저장소 (두 시세 앱이 공유, 이미지 없음)
+│   ├── market-ingest/        시세 수집(KIS · Mock) · 마스터 동기화 · 1분봉 집계 · corebank 중계. 한 대만 돈다
+│   ├── market-service/       시세 조회 REST · WebSocket. 여러 대로 늘어난다 (§66)
 │   ├── trading-service/      주문 · 체결 · 계좌 · 포지션 · 원장
 │   └── user-service/         사용자 · 관심종목
 ├── infra/
@@ -251,7 +253,8 @@ cd backend && ./gradlew build
 # 특정 서비스만 테스트
 cd backend && ./gradlew :trading-service:test
 
-# 단일 서비스 실행
+# 단일 서비스 실행. 시세는 두 앱이다: market-ingest(수집, 한 대) + market-service(조회 · WebSocket) (CLAUDE.md §66)
+cd backend && ./gradlew :market-ingest:bootRun
 cd backend && ./gradlew :market-service:bootRun
 
 # OpenAPI 명세 재생성 (서비스가 떠 있어야 한다)

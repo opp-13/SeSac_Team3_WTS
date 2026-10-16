@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAG="${1:-local}"
-SERVICES=(gateway-service market-service trading-service user-service)
+SERVICES=(gateway-service market-service market-ingest trading-service user-service)
 
 for service in "${SERVICES[@]}"; do
     echo "▸ wts/${service}:${TAG}"

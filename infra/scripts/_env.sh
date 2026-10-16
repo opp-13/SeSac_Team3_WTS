@@ -18,10 +18,12 @@ fi
 : "${MARKET_PORT:=8081}"
 : "${TRADING_PORT:=8082}"
 : "${USER_PORT:=8083}"
-export GATEWAY_PORT MARKET_PORT TRADING_PORT USER_PORT
+# 시세 수집 앱 (CLAUDE.md §66). 사용자 요청은 받지 않는다. health 확인용 포트다.
+: "${MARKET_INGEST_PORT:=8084}"
+export GATEWAY_PORT MARKET_PORT TRADING_PORT USER_PORT MARKET_INGEST_PORT
 
-SERVICE_NAMES=(gateway-service market-service trading-service user-service)
-SERVICE_PORTS=("$GATEWAY_PORT" "$MARKET_PORT" "$TRADING_PORT" "$USER_PORT")
+SERVICE_NAMES=(gateway-service market-service market-ingest trading-service user-service)
+SERVICE_PORTS=("$GATEWAY_PORT" "$MARKET_PORT" "$MARKET_INGEST_PORT" "$TRADING_PORT" "$USER_PORT")
 export SERVICE_NAMES SERVICE_PORTS
 
 RUN_DIR="$REPO_ROOT/infra/.run"

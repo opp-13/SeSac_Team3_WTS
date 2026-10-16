@@ -1,23 +1,16 @@
-// 시세 수집 / 캐시 / 이벤트 발행 (CLAUDE.md §6.2)
+// 시세 조회 앱(api). 사용자 수에 맞춰 늘어난다 (HPA, CLAUDE.md §66, ADR-0022).
+//   REST (종목 · 현재가 · 호가 · 1분봉), WebSocket 송신 (Valkey pub/sub 구독 → 자기 세션)
+// 시세를 만들지 않는다. KIS · Kafka 를 쓰지 않는다. 수집은 market-ingest 가 한다.
 dependencies {
     implementation project(':common')
+    implementation project(':market-core')
 
     implementation 'org.springframework.boot:spring-boot-starter-web'
     // OpenAPI 3 명세 + Swagger UI. 컨트롤러에서 생성한다.
     implementation libs.springdoc.openapi
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
-    // 최신 시세/호가 캐시 – 재생성 가능한 데이터만 저장한다 (§18)
-    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
-    implementation 'org.springframework.kafka:spring-kafka'
-
-    // 1분봉 저장 (CLAUDE.md §22, §23 candles_1m)
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.flywaydb:flyway-core'
-    implementation 'org.flywaydb:flyway-mysql'
-    runtimeOnly 'com.mysql:mysql-connector-j'
 
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     testImplementation 'org.testcontainers:junit-jupiter'
     testImplementation 'org.testcontainers:mysql'
-    testImplementation 'org.testcontainers:kafka'
 }

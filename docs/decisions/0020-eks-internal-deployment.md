@@ -28,6 +28,7 @@ WTS 앱을 올려 앱이 그 Kafka · MySQL에 붙는지 확인한다.
    `SPRING_KAFKA_SECURITY_PROTOCOL=SASL_SSL` 등으로 접속 설정을 넣는다. JDBC는 `SPRING_DATASOURCE_URL`로 덮어 `sslMode=REQUIRED`로 붙는다.
 4. **market-service · trading-service는 replica 1이다.** market은 Mock 시세 생성기 · KIS 연결이 둘이 되면 가격이 갈린다 (§56.4, Phase 10).
    trading은 엔진 다중 인스턴스 검증(Phase 8-3) 전이다.
+   → **ADR-0022(2026-10-16)로 갱신:** market은 별도 앱 · 이미지 `market-ingest`(KIS · Mock 수집, replica 1)와 `market-service`(조회 · WebSocket, HPA)로 나뉜다. trading-service도 HPA로 늘어난다.
 5. **배포 정의는 서비스마다 plain 매니페스트다.** trader-gitops `applications/<tier>/wts/<서비스>/manifests/`에
    Deployment · Service를 그대로 쓰고(ServiceAccount 없음, API 토큰 마운트 끔), 이미지 경로만 ApplicationSet의 `kustomize.images`로 넣는다
    (계정 번호 · prefix는 GitOps Bridge annotation에서 온다). 공용 Helm 차트는 쓰지 않는다.

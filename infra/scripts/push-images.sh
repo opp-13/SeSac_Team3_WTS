@@ -3,7 +3,7 @@
 #
 #   ./infra/scripts/push-images.sh <channel|corebank> <태그> [--dry-run]
 #
-#   channel   frontend · gateway-service · user-service · market-service  → eks-terraform-ingress
+#   channel   frontend · gateway-service · user-service · market-service · market-ingest  → eks-terraform-ingress
 #   corebank  trading-service                                             → eks-terraform-develop
 #
 # 사용자가 인터넷이 되는 PC 에서 실행한다 (trader-gitops docs/app-deploy-guide.md 6절, docs/wts-deploy.md).
@@ -34,7 +34,7 @@ DRY_RUN=false
 case "$TIER" in
     channel)
         NAME_PREFIX="eks-terraform-ingress"
-        BACKENDS=(gateway-service user-service market-service)
+        BACKENDS=(gateway-service user-service market-service market-ingest)
         FRONTEND=true
         ;;
     corebank)

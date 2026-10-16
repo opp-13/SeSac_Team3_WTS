@@ -1,0 +1,153 @@
+server:
+  # 사용자 요청은 받지 않는다. health 프로브용이다. 로컬에서 market-service(8081)와 함께 돌도록 포트를 나눈다.
+  port: ${MARKET_INGEST_PORT:8084}
+  shutdown: graceful
+
+spring:
+  application:
+    name: market-ingest
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  # 종목 마스터 · 1분봉 저장 (CLAUDE.md §22, §23, §57.1). 스키마는 market-core 의 Flyway 마이그레이션이다.
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_MARKET_DATABASE:wts_market}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+    username: ${MYSQL_USER:wts}
+    password: ${MYSQL_PASSWORD:wts}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: market-ingest-pool
+      maximum-pool-size: 10
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+
+  # Valkey – 최신 시세/호가 캐시 (CLAUDE.md §18)
+  data:
+    redis:
+      host: ${VALKEY_HOST:localhost}
+      port: ${VALKEY_PORT:6379}
+      timeout: 2s
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      properties:
+        # 타입 헤더를 붙이지 않는다. 다른 서비스가 자기 payload 클래스로 읽을 수 있어야 한다.
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: market-service
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # 메시지는 문자열로 받아 Consumer가 직접 역직렬화한다 (MarketPriceUpdatedConsumer 주석 참고).
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+# 한국투자증권 OpenAPI (CLAUDE.md §19, §20). market.provider=kis 일 때만 쓰인다.
+# 자격증명은 환경변수로만 들어온다. 기본값을 두지 않는다 (§33, §52).
+kis:
+  # vts(모의투자)만 쓴다. 이 서비스는 무조건 모의투자다 (CLAUDE.md §62.3). real은 기동이 멈춘다.
+  environment: ${KIS_ENVIRONMENT:vts}
+  app-key: ${KIS_APP_KEY:}
+  app-secret: ${KIS_APP_SECRET:}
+  auth:
+    # 승인키 재발급 주기. KIS 유효기간(24시간)보다 짧게 잡는다.
+    # 만료된 키로 등록하면 오류 없이 시세만 끊긴다.
+    approval-key-ttl: ${KIS_APPROVAL_KEY_TTL:12h}
+  rest:
+    # 비워두면 environment의 기본 도메인을 쓴다.
+    base-url: ${KIS_REST_BASE_URL:}
+    connect-timeout: 5s
+    read-timeout: 10s
+    # KIS는 초당 거래건수를 제한한다. 기동 시 종목별 시세를 연달아 조회하면 걸린다.
+    request-interval: ${KIS_REST_REQUEST_INTERVAL:1s}
+  websocket:
+    url: ${KIS_WEBSOCKET_URL:}
+    # 종목 하나에 체결가·호가 두 건이 등록된다. 숫자를 코드에 박지 않는다 (§20).
+    subscription-limit: ${KIS_SUBSCRIPTION_LIMIT:40}
+    reconnect-initial-delay: 1s
+    reconnect-max-delay: 30s
+    # 체결이 몰리면 한 프레임에 여러 건이 묶여 온다. 기본 8KB로는 끊긴다.
+    max-text-message-size: ${KIS_MAX_TEXT_MESSAGE_SIZE:512KB}
+    # 이 시간 동안 아무 메시지(heartbeat 포함)도 없으면 죽은 연결로 보고 다시 붙는다.
+    stale-timeout: ${KIS_STALE_TIMEOUT:90s}
+    # 스트림 상태를 주기적으로 남긴다. 끊긴 뒤 원인을 되짚으려면 평소 기록이 있어야 한다.
+    health-log-interval: ${KIS_HEALTH_LOG_INTERVAL:1m}
+
+market:
+  # mock: KIS 자격증명 없이 동작하는 기본 모드 (CLAUDE.md §0-4, §31)
+  # kis : 한국투자증권 OpenAPI 연동 (Phase 6)
+  provider: ${MARKET_PROVIDER:mock}
+
+  # 항상 시세를 받는 종목 (CLAUDE.md §57.2의 고정 종목).
+  # Phase 8-1에서는 시세 공급자가 이 종목만 구독한다. 수요 기반 구독은 Phase 8-2에서 붙인다.
+  # 종목 정보(이름 · 기준가)는 여기 두지 않는다. 종목 마스터(stocks 테이블)에서 읽는다.
+  pinned-symbols: ${MARKET_PINNED_SYMBOLS:005930,000660,035420,035720,005380}
+
+  # 종목 마스터 (CLAUDE.md §57.1). 한국투자증권 공개 종목정보 파일. 인증이 필요 없다.
+  # mock 모드는 내려받지 않고 저장소의 스냅샷(resources/master/*.zip)만 쓴다.
+  master:
+    download-base-url: ${MARKET_MASTER_DOWNLOAD_BASE_URL:https://new.real.download.dws.co.kr/common/master/}
+    # kis 모드에서 기동할 때 마스터가 이보다 오래됐으면 새로 받는다.
+    refresh-after: 20h
+    download-timeout: 30s
+    # 매 영업일 장 시작 전 (Asia/Seoul)
+    sync-cron: "0 0 8 * * MON-FRI"
+
+  mock:
+    tick-interval: ${MARKET_MOCK_TICK_INTERVAL:1s}
+    # 한 틱당 변동률 0.1% ~ 0.5% (CLAUDE.md §31)
+    min-change-rate: 0.001
+    max-change-rate: 0.005
+    # 시드를 주면 가격 흐름이 재현된다. 비우면 실행마다 달라진다.
+    seed: ${MARKET_MOCK_SEED:}
+
+  price:
+    # 이 시간을 넘긴 시세는 stale. 시장가 주문 거절 기준 (CLAUDE.md §11).
+    max-age: 5s
+
+  candle:
+    # 시세가 끊긴 종목의 봉을 닫아주는 주기
+    sweep-interval-ms: 30000
+
+  # corebank trading-service로 시세를 중계한다 (CLAUDE.md §65, ADR-0021).
+  # trading-service와 tier가 달라 Valkey · Kafka를 나눠 쓸 때만 켠다. 로컬은 같은 Valkey · Kafka라 끈다.
+  feed-relay:
+    enabled: ${MARKET_FEED_RELAY_ENABLED:false}
+    # 예: https://trading.internal.cloudnetwork.kr/internal/market/prices
+    url: ${MARKET_FEED_RELAY_URL:}
+    # Secrets Manager wts/channel/market-feed. trading-service의 키와 같은 값이다.
+    secret: ${MARKET_FEED_SECRET:}
+    connect-timeout: 2s
+    read-timeout: 3s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"

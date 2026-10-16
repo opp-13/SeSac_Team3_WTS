@@ -31,7 +31,8 @@ corebank에는 trading만 간다. 서비스마다 따로 빌드 · 태그 · pus
   다른 서비스의 빌드 레이어 캐시가 무효화된다. BuildKit의 Gradle 캐시 마운트(`--mount=type=cache`)로 완화하지만
   이미지 빌드가 Phase 7보다 느리다.
 - CI에서 Gradle이 두 번 돈다(`backend:unit-test` · `integration-test`, 그리고 서비스별 이미지 빌드). 이미지 빌드는 `-x test`다.
-- 서비스 디렉터리마다 거의 같은 Dockerfile이 생긴다. 서비스 이름만 다르다. 한 곳을 고치면 네 곳을 같이 고친다.
+- 서비스 디렉터리마다 거의 같은 Dockerfile이 생긴다. 서비스 이름만 다르다. 한 곳을 고치면 모든 서비스를 같이 고친다.
+- 2026-10-16: `market-ingest`가 추가되어 다섯이 됐다(ADR-0022). 공유 라이브러리 `market-core`는 이미지가 없다.
 
 ## 되돌리는 방법
 

@@ -1,0 +1,18 @@
+// 시세 수집 앱. 한 대만 돈다 (CLAUDE.md §66, ADR-0022).
+//   KIS · Mock 시세 수집 → Valkey 저장 · Kafka market.price.updated · Valkey pub/sub (WebSocket 송신용)
+//   종목 마스터 동기화, 1분봉 집계와 DB 저장, corebank 시세 중계 (§65)
+// 사용자 요청은 받지 않는다. 웹 서버는 health 프로브 · 중계 HTTP 클라이언트용이다.
+dependencies {
+    implementation project(':common')
+    implementation project(':market-core')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.kafka:spring-kafka'
+    // KIS 실시간 시세는 WebSocket 클라이언트로 받는다 (KisWebSocketClient). 브라우저용 WebSocket 서버는 market-service 에 있다.
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:mysql'
+    testImplementation 'org.testcontainers:kafka'
+}

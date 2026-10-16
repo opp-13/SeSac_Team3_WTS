@@ -17,15 +17,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.team.wts.market.quote.adapter.ws.dto.ServerMessages;
 import com.team.wts.market.quote.domain.MarketPrice;
 import com.team.wts.market.quote.domain.OrderBook;
-import com.team.wts.market.quote.domain.QuoteBroadcaster;
 
 /**
  * WebSocket 세션과 종목 구독 상태를 들고 있으면서 실시간 송신을 담당한다. (CLAUDE.md §25)
  *
  * <p>구독하지 않은 종목은 보내지 않는다. 종목이 늘어날수록 이 필터링이 중요해진다.
+ *
+ * <p>시세 · 호가는 market-ingest가 Valkey pub/sub로 내보내고, 이 인스턴스의 {@code QuoteFanoutSubscriber}가
+ * 받아 여기로 넘긴다 (CLAUDE.md §66.3). 그래서 market-service 인스턴스가 몇 개든 각자 자기 세션에 보낸다.
  */
 @Component
-public class MarketSessionRegistry implements QuoteBroadcaster {
+public class MarketSessionRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(MarketSessionRegistry.class);
 
@@ -75,14 +77,12 @@ public class MarketSessionRegistry implements QuoteBroadcaster {
         return subscribers.size();
     }
 
-    // ── QuoteBroadcaster ───────────────────────────────────
+    // ── 송신 (QuoteFanoutSubscriber가 부른다) ────────────────
 
-    @Override
     public void broadcastPrice(MarketPrice price) {
         send(price.symbol(), ServerMessages.Price.from(price));
     }
 
-    @Override
     public void broadcastOrderBook(OrderBook orderBook) {
         send(orderBook.symbol(), ServerMessages.Orderbook.from(orderBook));
     }

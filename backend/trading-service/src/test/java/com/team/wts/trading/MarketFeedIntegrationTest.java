@@ -36,6 +36,7 @@ import com.team.wts.common.event.DomainEvent;
 import com.team.wts.common.event.KafkaTopics;
 import com.team.wts.common.feed.FeedSignature;
 import com.team.wts.trading.execution.domain.ExecutionRepository;
+import com.team.wts.trading.market.adapter.out.cache.ValkeyMarketPriceMirror;
 import com.team.wts.trading.support.IntegrationTestBase;
 import com.team.wts.trading.support.MarketEventFixture;
 import com.team.wts.trading.support.MarketPriceFixture;
@@ -95,6 +96,9 @@ class MarketFeedIntegrationTest extends IntegrationTestBase {
 
     @Autowired
     private ExecutionRepository executions;
+
+    @Autowired
+    private ValkeyMarketPriceMirror mirror;
 
     private final FeedSignature signature = new FeedSignature(SECRET);
 
@@ -181,6 +185,41 @@ class MarketFeedIntegrationTest extends IntegrationTestBase {
 
         assertThat(response.getBody()).containsEntry("accepted", 0).containsEntry("skipped", 3);
         assertThat(redis.opsForValue().get("market:price:" + HYNIX)).contains("\"price\":201000");
+    }
+
+    @Test
+    @DisplayName("같은 종목을 여러 스레드가 순서 없이 동시에 써도 가장 새로운 값만 남는다 - trading HPA (§66.5)")
+    void concurrentWritesKeepTheNewest() throws Exception {
+        Instant base = Instant.now();
+        int writers = 32;
+        java.util.List<Integer> order = new java.util.ArrayList<>();
+        for (int i = 0; i < writers; i++) {
+            order.add(i);
+        }
+        java.util.Collections.shuffle(order, new java.util.Random(20261016L));
+
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<java.util.concurrent.Future<ValkeyMarketPriceMirror.SaveResult>> results =
+                new java.util.ArrayList<>();
+        for (int i : order) {
+            Instant at = base.plusMillis(i);
+            String json = "{\"symbol\":\"%s\",\"price\":%d,\"timestamp\":\"%s\"}".formatted(HYNIX, 200000 + i, at);
+            results.add(pool.submit(() -> {
+                start.await();
+                return mirror.saveIfNewer(HYNIX, at, json);
+            }));
+        }
+        start.countDown();
+        for (java.util.concurrent.Future<ValkeyMarketPriceMirror.SaveResult> result : results) {
+            assertThat(result.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                    .isNotEqualTo(ValkeyMarketPriceMirror.SaveResult.FAILED);
+        }
+        pool.shutdown();
+
+        assertThat(redis.opsForValue().get("market:price:" + HYNIX)).contains("\"price\":" + (200000 + writers - 1));
+        // 이미 더 새로운 값이 있으면 쓰지 않는다
+        assertThat(mirror.saveIfNewer(HYNIX, base, "{}")).isEqualTo(ValkeyMarketPriceMirror.SaveResult.NOT_NEWER);
     }
 
     @Test

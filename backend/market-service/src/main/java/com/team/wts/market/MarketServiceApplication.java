@@ -2,18 +2,15 @@ package com.team.wts.market;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * 시세 수집 · 캐시 · 이벤트 발행 서비스. (CLAUDE.md §6.2)
+ * 시세 조회 앱(api). (CLAUDE.md §6.2, §66, ADR-0022)
  *
- * <p>한국투자증권 OpenAPI와 직접 통신하는 유일한 서비스이며,
- * trading-service와는 Kafka/Valkey를 통해서만 연결된다. 직접 HTTP 호출하지 않는다.
+ * <p>종목 · 현재가 · 호가 · 1분봉 REST와 브라우저 WebSocket을 맡는다. 사용자 수에 맞춰 여러 대로 늘어난다.
+ * 시세를 만들지 않는다. market-ingest가 Valkey에 쓴 값을 읽고, Valkey pub/sub로 오는 시세를 자기 세션에 보낸다.
+ * KIS · Kafka와 통신하지 않는다.
  */
 @SpringBootApplication
-@ConfigurationPropertiesScan
-@EnableScheduling
 public class MarketServiceApplication {
 
     public static void main(String[] args) {

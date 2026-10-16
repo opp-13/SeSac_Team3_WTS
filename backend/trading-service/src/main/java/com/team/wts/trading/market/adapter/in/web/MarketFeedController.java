@@ -16,7 +16,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.cfg.JsonNodeFeature;
 import com.team.wts.common.error.DomainException;
 import com.team.wts.common.error.ErrorCode;
 import com.team.wts.common.feed.FeedSignature;
@@ -57,7 +57,7 @@ public class MarketFeedController {
         // double로 읽으면 나노초가 깎이고, 다시 쓸 때 지수 표기(1.79E9)로 바뀔 수 있다.
         this.reader = objectMapper.reader()
                 .with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
-                .with(JsonNodeFactory.withExactBigDecimals(true));
+                .without(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES);
         this.clock = clock;
     }
 

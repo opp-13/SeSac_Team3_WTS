@@ -1,0 +1,20 @@
+// market-ingest 와 market-service(api)가 함께 쓰는 시세 도메인 · 저장소. (CLAUDE.md §66, ADR-0022)
+//   도메인     MarketPrice · OrderBook · Stock · Candle
+//   Valkey     최신 시세 · 호가 캐시, 진행 중 1분봉, fan-out 채널 이름
+//   MySQL      stocks · candles_1m 의 JPA 저장소와 Flyway 마이그레이션 (두 앱이 같은 DB wts_market 을 쓴다)
+// 실행 가능한 애플리케이션이 아니다. 어느 역할에서만 도는 코드는 여기 두지 않는다.
+apply plugin: 'java-library'
+
+bootJar { enabled = false }
+jar { enabled = true }
+
+dependencies {
+    api 'org.springframework.boot:spring-boot-starter-data-jpa'
+    // 최신 시세/호가 캐시 – 재생성 가능한 데이터만 저장한다 (§18)
+    api 'org.springframework.boot:spring-boot-starter-data-redis'
+    api 'org.springframework.boot:spring-boot-starter-json'
+    // 스키마는 Flyway 마이그레이션으로만 바꾼다 (ADR-0004). 마이그레이션 파일도 이 모듈에 있다.
+    api 'org.flywaydb:flyway-core'
+    api 'org.flywaydb:flyway-mysql'
+    runtimeOnly 'com.mysql:mysql-connector-j'
+}

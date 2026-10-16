@@ -142,7 +142,7 @@ docker:backend:
   extends: .docker
   parallel:
     matrix:
-      - SERVICE: [gateway-service, market-service, trading-service, user-service]
+      - SERVICE: [gateway-service, market-service, market-ingest, trading-service, user-service]
   script:
     - echo "▸ wts/${SERVICE}"
     - docker build -f "backend/${SERVICE}/Dockerfile" -t "wts/${SERVICE}:${CI_COMMIT_SHORT_SHA}" backend

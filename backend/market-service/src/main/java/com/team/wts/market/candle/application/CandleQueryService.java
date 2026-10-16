@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.team.wts.market.candle.domain.Candle;
 import com.team.wts.market.candle.domain.CandleRepository;
+import com.team.wts.market.candle.domain.CurrentCandleStore;
 import com.team.wts.market.stock.application.StockQueryService;
 
 /** 1분봉 조회. (CLAUDE.md §24) */
@@ -18,21 +19,22 @@ import com.team.wts.market.stock.application.StockQueryService;
 public class CandleQueryService {
 
     private final CandleRepository candles;
-    private final CandleAggregator aggregator;
+    private final CurrentCandleStore current;
     private final StockQueryService stocks;
 
     public CandleQueryService(CandleRepository candles,
-                              CandleAggregator aggregator,
+                              CurrentCandleStore current,
                               StockQueryService stocks) {
         this.candles = candles;
-        this.aggregator = aggregator;
+        this.current = current;
         this.stocks = stocks;
     }
 
     /**
      * 확정된 봉 + 아직 진행 중인 현재 봉.
      *
-     * <p>현재 봉을 함께 주지 않으면 차트의 마지막 1분이 비어 보인다.
+     * <p>현재 봉을 함께 주지 않으면 차트의 마지막 1분이 비어 보인다. 현재 봉은 market-ingest가 Valkey에 써 둔 값이다
+ * (§66.4). 이 앱은 집계하지 않는다.
      *
      * @param limit 돌려줄 최대 개수. 최근 것부터 센다.
      */
@@ -45,7 +47,7 @@ public class CandleQueryService {
                 candles.findBySymbolAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(symbol, from);
 
         List<Candle> result = new ArrayList<>(completed);
-        aggregator.currentCandle(symbol)
+        current.find(symbol)
                 // 이미 확정 저장된 봉과 겹치면 넣지 않는다.
                 .filter(current -> completed.stream()
                         .noneMatch(candle -> candle.openTime().equals(current.openTime())))

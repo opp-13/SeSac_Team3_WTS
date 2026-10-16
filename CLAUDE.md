@@ -293,6 +293,9 @@ Tempo
 - Mock Market Mode 제공
 - (Phase 8) 종목 마스터 동기화 · 수요 기반 계층형 구독 (§57)
 
+> **§66 →** 오토스케일링을 위해 두 앱으로 나뉘었다. `market-ingest`(KIS 연동 · 수집 · 마스터 · 1분봉 · 중계, 한 대)와
+> `market-service`(REST · WebSocket 송신, 여러 대). 공유 코드는 `market-core` 모듈이다.
+
 중요:
 
 ```text
@@ -2805,6 +2808,8 @@ ADR-0018  이 서비스는 모의투자 전용이다 (KIS는 시세 전용 · vt
 ```text
 Rate Limiting          Gateway RequestRateLimiter + Valkey. §6.1의 "구조만 마련"을 실제로 적용한다.
 market 다중 인스턴스    KIS 연결은 앱키당 하나다 → 리더 한 대만 수집한다.
+                       → §66에서 리더 선출 대신 앱 분리(market-ingest replica 1 · market-service HPA)로, WebSocket 송신은
+                         Kafka 대신 Valkey pub/sub로 풀었다 (ADR-0022).
                        WebSocket 송신은 각 인스턴스가 market.price.updated를 소비해서 한다.
                        리더 선출 방식은 ADR로 정한다. 계좌 정합성 락이 아니므로 §13과 무관하다.
 관측성                  OpenTelemetry → Tempo (트레이스), Micrometer → Prometheus → Grafana (지표),
@@ -2911,6 +2916,8 @@ KOSPI200 선물 · 옵션. 주식과 다른 도메인이다.
 | trading-service | corebank |
 
 Valkey는 tier마다 하나씩 둔다. market-service · trading-service는 replica 1이다 (ADR-0020).
+
+> **→ §66 (ADR-0022):** market은 별도 앱 · 이미지 `market-ingest`(수집, replica 1)와 `market-service`(조회 · WebSocket, HPA)로 나뉘고, trading-service도 HPA로 늘어난다. channel에 market-ingest가 추가된다.
 
 ## 64.3 이미지
 
@@ -3057,3 +3064,131 @@ trader-gitops            market: MARKET_FEED_RELAY_ENABLED=true, MARKET_FEED_REL
 
 남는 위험: channel 안의 다른 파드도 이 ALB 경로에 닿는다. 서명 키가 없으면 시세를 넣을 수 없지만,
 키가 새면 가짜 시세로 체결을 일으킬 수 있다. 키는 두 앱만 읽는다 (Pod Identity). 교체 절차는 런북에 둔다.
+
+---
+
+# 66. 오토스케일링을 위한 분리 – market-ingest / market-service, trading 다중 인스턴스
+
+> 트래픽에 맞춰 파드 수를 늘리고 줄이기(HPA) 위한 설계다. ADR-0022.
+> §63 Phase 10의 "market 다중 인스턴스"를 리더 선출 없이 **앱(모듈 · 이미지) 분리**로 먼저 푼다.
+
+## 66.1 문제
+
+```text
+market-service 한 프로세스에 "하나만 돌아야 하는 것"과 "사용자 수만큼 늘어야 하는 것"이 섞여 있었다.
+  하나만      KIS 연결(앱키당 1개, 두 개면 OPSP8996 ALREADY IN USE appkey) · Mock 시세 생성기
+              종목 마스터 동기화 · 1분봉 집계와 DB 저장 · tier 간 시세 중계(§65)
+  늘어야      REST 조회 · WebSocket 연결과 송신
+→ replica 1에 묶인다 (ADR-0020 4항).
+
+늘리면 깨지는 곳
+  WebSocket 송신   수집 스레드가 자기 세션에 바로 보냈다. KIS를 받지 않는 인스턴스는 화면에 아무것도 못 보낸다.
+                   호가는 Kafka에도 없다 (§16).
+  진행 중 1분봉    CandleAggregator의 메모리에 있었다. 다른 인스턴스의 차트는 마지막 봉이 빈다.
+  trading 수신     §65의 "더 새로운 값만" 비교가 원자적이지 않았다. 파드가 여럿이면 같은 종목 요청이 동시에 갈린다.
+
+trading-service의 나머지는 이미 다중 인스턴스에 안전하다.
+  Outbox Publisher는 FOR UPDATE SKIP LOCKED, 주문은 계좌 락 · 멱등 키(§13, §14),
+  시세 소비자는 컨슈머 그룹으로 파티션을 나눈다. 중복 체결은 상태 머신이 막는다 (ADR-0011).
+```
+
+## 66.2 모듈과 앱
+
+`market-service`를 Gradle 모듈 셋으로 나눈다. 앱 둘은 이미지 · Dockerfile · ECR 리포가 따로다.
+
+| 모듈 | 종류 | 가진 것 | 배포 |
+|---|---|---|---|
+| `market-core` | 라이브러리 (이미지 없음) | 도메인(MarketPrice · OrderBook · Stock · Candle), Valkey 캐시(`ValkeyQuoteCache`, `ValkeyCurrentCandleStore`), JPA 저장소(stocks · candles_1m), Flyway 마이그레이션, fan-out 채널 이름 | – |
+| `market-ingest` | 앱 · 이미지 `apps/wts/market-ingest` | KIS · Mock 어댑터, `QuoteIngestService`(Valkey · Kafka · pub/sub 발행), 종목 마스터 동기화(스냅샷 zip 포함), 1분봉 소비 · 집계 · 저장, 시세 중계(§65) | `market-ingest`, replica 1, `strategy: Recreate` |
+| `market-service` | 앱 · 이미지 `apps/wts/market-service` | REST(종목 · 현재가 · 호가 · 1분봉), 브라우저 WebSocket, pub/sub 구독 | `market-service`, HPA |
+
+```text
+- 패키지는 그대로 com.team.wts.market 이다. 클래스는 옮기기만 했다. 각 앱은 자기 클래스 + market-core 만 가진다.
+- market-service(api)는 Kafka · KIS 의존성이 없다. market-ingest는 브라우저용 WebSocket 서버 · 컨트롤러 · OpenAPI가 없다.
+  (KIS 실시간 수신용 WebSocket 클라이언트는 ingest에 있다.)
+- 이름: 사용자 요청을 받는 쪽이 market-service 이름을 그대로 쓴다. gateway 라우트 · Service · OpenAPI 생성은 바뀌지 않는다.
+- 두 앱은 같은 DB(wts_market) · 같은 Valkey를 쓴다. 쓰는 쪽은 ingest, 읽는 쪽은 api다 (예외: 없음).
+  Flyway는 두 앱 모두 기동 시 적용을 시도한다. Flyway 잠금이 한쪽만 적용하게 한다.
+- 로컬: run-backend.sh 가 둘 다 띄운다. market-ingest 포트는 MARKET_INGEST_PORT(기본 8084, health 확인용).
+- Recreate: 옛 ingest를 완전히 내린 뒤 새 ingest를 띄운다. 그 사이 수 초 동안 시세가 멈춘다.
+- ingest가 죽으면 Kubernetes가 다시 띄운다. 그동안 api는 마지막 시세(Valkey)를 보여 주고 송신만 멈춘다.
+  ingest 이중화(리더 선출)는 하지 않는다. 필요해지면 다시 정한다.
+```
+
+## 66.3 WebSocket 송신 – Valkey pub/sub (§18 "WebSocket fan-out 보조")
+
+```text
+market-ingest   QuoteIngestService
+                  시세  Valkey market:price:{symbol} 저장 → Kafka market.price.updated → PUBLISH market:fanout:price
+                  호가  Valkey market:orderbook:{symbol} 저장                        → PUBLISH market:fanout:orderbook
+                값은 Valkey 캐시와 같은 JSON(market-core의 MarketPrice · OrderBook)이다.
+market-service  모든 인스턴스가 두 채널을 SUBSCRIBE → 받은 값을 자기 세션 중 그 종목을 구독한 세션에 보낸다.
+                구독 스레드에서 순서대로 처리한다 (같은 종목 시세가 뒤바뀌어 나가지 않게).
+```
+
+```text
+- 채널 이름은 market-core의 QuoteFanoutChannels 한 곳에 있다.
+- pub/sub은 구독자 모두에게 간다. 인스턴스마다 컨슈머 그룹을 만들 필요가 없고, HPA로 파드가 늘고 줄 때 리밸런싱이 없다.
+- 저장하지 않는다. api가 재시작하는 동안의 메시지는 잃는다. 클라이언트가 다시 SUBSCRIBE하면 Valkey 스냅샷을 먼저 보낸다
+  (MarketWebSocketHandler, 지금과 같다). 시세는 다시 온다 (§18).
+- 호가를 Kafka에 넣지 않는다는 결정(§16)은 유지한다.
+```
+
+## 66.4 진행 중 1분봉 – Valkey (§18 "현재 1분봉 상태")
+
+```text
+market-ingest   CandleAggregator가 봉을 갱신할 때마다 market:candle:1m:{symbol} 에 현재 봉 JSON을 쓴다. TTL 3분.
+                봉을 확정해 DB(candles_1m)에 저장하는 것도 ingest 한 곳에서만 한다.
+market-service  CandleQueryService.recent()가 진행 중 봉을 Valkey에서 읽어 확정 봉 뒤에 붙인다.
+- TTL: ingest가 멈추면 오래된 "현재 봉"이 차트에 남지 않게 한다.
+- Valkey를 읽지 못하면 확정 봉만 돌려준다.
+```
+
+## 66.5 trading 시세 수신 원자화 (§65 보완)
+
+```text
+- ValkeyMarketPriceMirror.saveIfNewer 는 Lua 스크립트 한 번이다.
+    보조 키 market:price:seq:{symbol} (epoch 마이크로초) 보다 새로울 때만
+    market:price:{symbol} 과 보조 키를 함께 쓰고 1을 돌려준다. 아니면 0.
+- 값 형식(market:price:{symbol})은 그대로다. ValkeyMarketPriceQuery는 바뀌지 않는다.
+- Kafka 재발행은 Lua가 1을 돌려줄 때만 한다. 더 오래된 시세가 corebank Kafka로 나가지 않는다.
+- 두 키는 단일 노드 Valkey를 전제한다 (tier마다 하나, §64.2). 클러스터 모드로 바꾸면 해시 태그가 필요하다.
+```
+
+## 66.6 배포
+
+```text
+trader-terraform-sessac
+  envs/ingress/registry   ECR 리포 wts/market-ingest 추가 (IMMUTABLE)
+  envs/ingress/cluster    Pod Identity: market-ingest = db · kis · market-feed, market-service = db 만
+trader-gitops
+  applications/channel/wts/market-ingest/    새 앱. ServiceAccount market-ingest, SecretProviderClass(db · kis · market-feed),
+                                             Deployment replicas 1 · Recreate. Service 없음 (사용자 요청을 받지 않는다)
+  applications/channel/wts/market-service/   api만. SecretProviderClass(db), Deployment(replicas 없음), HPA min 1 · max 4 · CPU 70%
+                                             Kafka · KIS · 중계 환경변수와 Kafka Secret 참조가 빠진다
+  applications/corebank/wts/trading-service/ HPA min 1 · max 3 · CPU 70%
+- 이미지: ./infra/scripts/push-images.sh channel <태그> 가 market-ingest도 만든다. 두 앱의 태그를 함께 바꾼다.
+- HPA는 metrics-server(trader-terraform-sessac ADR-0040)를 쓴다. 노드는 Karpenter NodePool app이 늘린다.
+- HPA가 줄이면 그 파드의 WebSocket이 끊긴다. 프론트가 다시 연결하고 스냅샷을 받는다.
+```
+
+## 66.7 테스트
+
+```text
+market-core     도메인 단위 테스트
+market-ingest   수집 · 파서 · 집계 · 중계 단위 테스트
+                통합(MySQL · Valkey · Kafka): 기동 시 마스터 적재, 틱 → Valkey, 틱 → pub/sub, 틱 → Kafka → 현재 1분봉(Valkey),
+                브라우저용 WebSocket 설정이 없다
+market-service  통합(MySQL · Valkey만): ingest가 쓰는 값을 market-core 저장소로 직접 넣고(MarketDataFixture) REST로 읽는다.
+                pub/sub로 발행한 시세 · 호가가 WebSocket 클라이언트에 닿는다
+trading         Lua: 순서가 뒤바뀐 쓰기 · 같은 종목 동시 쓰기에서 가장 새로운 값만 남는다
+```
+
+## 66.8 바뀌는 결정
+
+```text
+ADR-0020 4항 "market-service · trading-service는 replica 1"  → market-ingest만 replica 1, market-service · trading은 HPA
+§6.2 "market-service" 한 서비스                               → market-ingest(수집) + market-service(조회 · 송신) + market-core
+§63 Phase 10 "각 인스턴스가 market.price.updated를 소비해 송신" → Valkey pub/sub (호가가 Kafka에 없다)
+§63 Phase 10 "리더 한 대만 수집(리더 선출)"                   → 수집을 별도 앱(replica 1)으로 분리
+```

@@ -5,7 +5,7 @@
 #   docker build -f backend/market-service/Dockerfile -t wts/market-service backend
 #
 # jar 는 이 안에서 Gradle 로 만든다. 로컬 빌드 산출물에 의존하지 않으므로 어느 PC 에서 빌드해도 같은 이미지가 나온다.
-# 4 서비스가 한 Gradle 멀티 프로젝트라 settings.gradle 이 전부 include 한다 → 소스를 통째로 복사한다.
+# 서비스들이 한 Gradle 멀티 프로젝트라 settings.gradle 이 전부 include 한다 → 소스를 통째로 복사한다.
 
 # jar 는 아키텍처와 무관하다. buildx 멀티 아키텍처 빌드에서도 빌드 단계는 네이티브로 한 번만 돈다.
 FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS build

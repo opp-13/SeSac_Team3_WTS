@@ -21,8 +21,6 @@ import com.team.wts.common.market.StockSymbol;
 import com.team.wts.trading.config.MarketPriceProperties;
 import com.team.wts.trading.market.adapter.out.cache.ValkeyMarketPriceMirror;
 import com.team.wts.trading.market.adapter.out.kafka.KafkaMarketPriceRepublisher;
-import com.team.wts.trading.market.domain.MarketPrice;
-import com.team.wts.trading.market.domain.MarketPriceQuery;
 
 /**
  * channel에서 중계해 온 시세를 이 tier에 다시 낸다. (CLAUDE.md §65.3, ADR-0021)
@@ -34,7 +32,8 @@ import com.team.wts.trading.market.domain.MarketPriceQuery;
  * </ul>
  *
  * <p>"더 새로운 값만" 규칙 덕분에 같은 요청이 다시 와도(재전송 · 중복) 해가 없다.
- * 비교와 쓰기가 원자적이지 않지만, 보내는 쪽은 market-service 한 대(replica 1)가 순서대로 보낸다.
+ * 비교와 쓰기는 Valkey에서 원자적으로 한다({@link ValkeyMarketPriceMirror}). trading-service가 여러 개여도
+ * 옛 시세가 새 시세를 덮지 않고, 옛 시세는 Kafka로 다시 나가지 않는다 (§66.5).
  *
  * <p>시각은 Jackson으로 읽는다. 이벤트의 시각은 숫자(epoch 초.나노)로 온다 - 발행자가 Spring Kafka 기본 매퍼를 쓴다.
  * ISO 문자열도 받는다. Valkey에는 market-service와 같은 ISO 문자열로 쓴다.
@@ -49,7 +48,6 @@ public class MarketFeedService {
 
     private static final Duration SUMMARY_INTERVAL = Duration.ofMinutes(1);
 
-    private final MarketPriceQuery prices;
     private final ValkeyMarketPriceMirror cache;
     private final KafkaMarketPriceRepublisher events;
     private final MarketPriceProperties priceProperties;
@@ -61,10 +59,9 @@ public class MarketFeedService {
     private Stats stats = new Stats();
     private Instant lastSummaryAt;
 
-    public MarketFeedService(MarketPriceQuery prices, ValkeyMarketPriceMirror cache,
+    public MarketFeedService(ValkeyMarketPriceMirror cache,
             KafkaMarketPriceRepublisher events, MarketPriceProperties priceProperties,
             ObjectMapper objectMapper, Clock clock) {
-        this.prices = prices;
         this.cache = cache;
         this.events = events;
         this.priceProperties = priceProperties;
@@ -93,16 +90,18 @@ public class MarketFeedService {
         if (quote.timestamp().plus(priceProperties.maxAge()).isBefore(clock.instant())) {
             return Outcome.STALE;
         }
-        Optional<MarketPrice> current = prices.findLatest(quote.symbol());
-        if (current.isPresent() && !quote.timestamp().isAfter(current.get().timestamp())) {
-            return Outcome.NOT_NEWER;
+        String cacheJson = toCacheJson(event.path("payload"), quote.timestamp());
+        switch (cache.saveIfNewer(quote.symbol(), quote.timestamp(), cacheJson)) {
+            case NOT_NEWER:
+                return Outcome.NOT_NEWER;
+            case FAILED:
+                return Outcome.WRITE_FAILED;
+            case WRITTEN:
+            default:
+                // 쓴 것만 다시 낸다. 늦게 온 옛 시세가 corebank Kafka로 나가 체결을 일으키지 않게 한다.
+                events.publish(quote.symbol(), event.path("eventId").asText(null), toJson(event));
+                return Outcome.ACCEPTED;
         }
-
-        if (!cache.save(quote.symbol(), toCacheJson(event.path("payload"), quote.timestamp()))) {
-            return Outcome.WRITE_FAILED;
-        }
-        events.publish(quote.symbol(), event.path("eventId").asText(null), toJson(event));
-        return Outcome.ACCEPTED;
     }
 
     private Optional<Quote> parse(JsonNode event) {
