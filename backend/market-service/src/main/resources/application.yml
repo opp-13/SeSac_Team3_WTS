@@ -46,6 +46,11 @@ market:
     viewer-ttl: 30s
     # 구독 중인 종목의 수요를 다시 기록하는 주기
     heartbeat-ms: 10000
+  # 브라우저 WebSocket (CLAUDE.md §68)
+  websocket:
+    # 종료할 때 DRAIN 뒤 클라이언트가 새 연결로 옮겨 가기를 기다리는 최대 시간. 지나면 남은 세션을 1001로 닫는다.
+    # preStop 10s + 이 값 + graceful shutdown 20s 가 terminationGracePeriodSeconds(45s) 안에 들어가야 한다.
+    drain-timeout: 5s
 
 management:
   endpoints:

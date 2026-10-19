@@ -76,6 +76,7 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
                 Set<String> remaining = registry.unsubscribe(session.getId(), command.symbols());
                 registry.sendTo(session.getId(), ServerMessages.Subscribed.of(List.copyOf(remaining)));
             }
+            case ClientCommand.PING -> registry.sendTo(session.getId(), ServerMessages.Pong.INSTANCE);
             default -> registry.sendTo(session.getId(),
                     ServerMessages.Error.of("알 수 없는 type 입니다: " + command.type()));
         }

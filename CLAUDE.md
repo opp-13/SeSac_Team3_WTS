@@ -1199,6 +1199,8 @@ Server Orderbook:
 ```
 
 > **Phase 8 →** `SUBSCRIBE`에 `mode: FOCUS | LIST`를 더한다 (생략하면 LIST). 세션당 구독 종목 수에 상한이 있다 (§57.3).
+>
+> **§68 →** 서버 → 클라이언트 `DRAIN`(곧 내려간다, 새 연결로 옮겨 오라) · `PONG`, 클라이언트 → 서버 `PING`(유휴 연결 유지)을 더했다.
 
 ---
 
@@ -3178,6 +3180,11 @@ trader-gitops
 - HPA가 줄이면 그 파드의 WebSocket이 끊긴다. 프론트가 다시 연결하고 스냅샷을 받는다.
 ```
 
+> **→** 축소 · 롤링 때 끊김을 정돈했다. 파드는 preStop 10초 동안 엔드포인트에서 먼저 빠지고(`terminationGracePeriodSeconds` 45),
+> market-service는 종료가 시작되면 세션을 1001(Going Away)로 먼저 닫는다(`WebSocketShutdown`).
+> 프론트는 재연결 간격에 0.5~1.5배 지터를 둔다. gateway-service도 HPA(2~3)로 늘어나고, 두 HPA 모두 1분에 한 파드씩만 줄인다. 상시 2개와 PDB로 노드가 빠져도 남은 파드가 받는다.
+> **§68 →** 그다음 계획된 종료의 공백을 0으로 만들었다. 내려가는 쪽이 DRAIN을 보내고 클라이언트가 새 연결을 먼저 맺는다.
+
 ## 66.7 테스트
 
 ```text
@@ -3286,4 +3293,69 @@ Kafka market.price.updated              바뀌지 않는다
        ViewerDemandRecorder: TTL, 형식이 틀린 종목코드 버림 / MarketPrice: source 없는 옛 JSON
 통합   ingest: 틱 → Valkey(SIMULATED) · pub/sub · Kafka → 1분봉, 수요 기록 → 다음 틱에 시세, 재시작 후 같은 시각 = Valkey 바이트 동일
        api: SUBSCRIBE → 수요 키, 현재가 응답의 source
+```
+
+---
+
+# 68. 계획된 종료에 시세 WebSocket 공백 0 – DRAIN과 make-before-break
+
+> HPA 축소 · 롤링 배포 · Karpenter consolidation · 노드 drain처럼 **미리 알 수 있는 종료**에서 브라우저가 받는
+> 시세가 한순간도 끊기지 않게 한다. ADR-0024.
+> 계획되지 않은 장애(노드 장애, OOM, 프로세스 크래시)와 market-ingest 재시작(시세 수집 자체가 멈춤)은 범위 밖이다.
+
+## 68.1 원리
+
+```text
+1. 내려가는 쪽이 먼저 {"type":"DRAIN"} 을 보낸다.
+2. 클라이언트는 그 연결을 쥔 채 새 연결을 맺고, 같은 구독을 보낸다.
+   새 연결은 반드시 다른 인스턴스로 간다. preStop(10s) 동안 Service 엔드포인트 · ALB 대상에서 이미 빠졌기 때문이다.
+3. 새 연결이 SUBSCRIBED 를 받으면 옛 연결을 1000으로 닫는다. 그 전까지 옛 연결도 계속 시세를 준다.
+4. 겹치는 동안 같은 시세가 두 번 올 수 있다. 화면 상태(marketStore)는 timestamp가 더 새로운 값만 반영한다.
+5. drain-timeout(5s) 안에 옮겨 가지 않은 연결은 서버가 1001로 닫는다. 그 클라이언트는 평소처럼 재연결한다.
+```
+
+## 68.2 경로별
+
+```text
+브라우저 ─ CloudFront ─ ALB ─┬─ /ws/*  → gateway-service ─ market-service     (§68.4 이후)
+                            └─ 그 외  → frontend(nginx) ─ gateway-service ─ ...
+```
+
+| 내려가는 것 | DRAIN을 보내는 곳 | 구현 |
+|---|---|---|
+| market-service | market-service | `WebSocketShutdown`: DRAIN → 세션이 0이 되거나 `market.websocket.drain-timeout`까지 → 남은 세션 1001. gateway는 그대로 전달한다 |
+| gateway-service | gateway | `DrainingWebSocketService`가 Spring Cloud Gateway의 핸드셰이크 서비스를 감싸 브라우저 쪽 세션을 추적한다(`@Primary`, 원래 빈에 위임). `GatewayWebSocketDrain`이 프록시 흐름 사이에 DRAIN을 끼워 넣고, `wts.gateway.websocket.drain-timeout`까지 기다린 뒤 1001 |
+| frontend(nginx) | 없음 | nginx는 메시지를 끼울 수 없다. 그래서 ALB 규칙 `/ws/*` → gateway 대상 그룹으로 WebSocket 경로에서 뺀다 (trader-terraform-sessac ADR-0050) |
+
+두 종료 단계 모두 SmartLifecycle 기본 phase라 웹 서버 graceful shutdown보다 먼저 멈춘다.
+시간 예산: preStop 10s + drain 5s + graceful 20s = 35s ≤ `terminationGracePeriodSeconds` 45s.
+
+## 68.3 계약 (§25 추가분)
+
+```text
+서버 → 클라이언트  {"type":"DRAIN"}   곧 내려간다. 새 연결로 옮겨 오라. market-service와 gateway가 각각 보낼 수 있다 (클라이언트는 첫 번째만 따른다)
+                  {"type":"PONG"}    PING의 답
+클라이언트 → 서버  {"type":"PING"}    25초마다. 시세가 흐르지 않는 연결도 ALB 유휴 제한(기본 60초)에 끊기지 않게 한다
+```
+
+## 68.4 적용 순서
+
+```text
+1. WTS 이미지 (gateway · market-service · frontend)    이것만으로 market-service · gateway 축소는 공백 0
+2. Terraform network (ws_to_gateway=false)             gateway 대상 그룹 · SG · SSM
+   Terraform bootstrap                                 GitOps Bridge annotation alb_gateway_target_group_arn
+3. gitops                                               gateway TargetGroupBinding → 대상 그룹이 healthy
+4. Terraform network (ws_to_gateway=true)              /ws/* 가 gateway로. 이제 nginx 축소도 WebSocket과 무관
+```
+
+## 68.5 테스트
+
+```text
+market-service  단위: DRAIN 후 세션이 떠나면 일찍 끝남 · 안 떠나면 시간 뒤 1001 · 모든 세션에 전송
+                통합: DRAIN 수신 → 1001, DRAIN 받고 떠나면 즉시 종료, PING → PONG
+gateway         단위: DrainableSession이 프록시 흐름에 DRAIN을 끼움 · 종료 순서
+                통합(실제 Spring Cloud Gateway 프록시 + 테스트 backend): DRAIN이 브라우저 쪽에 닿음, 떠나면 즉시 종료, 안 떠나면 1001
+frontend        실제 marketSocket.ts · marketStore.ts를 가짜 WebSocket으로: 새 연결이 SUBSCRIBED를 받은 뒤에만 옛 연결을 닫음(공백 0),
+                새 연결 실패 · 옛 연결 선종료 · 구독 없음 · PING · disconnect, 오래된 timestamp 버림
+EKS             연결을 연 채 rollout restart → DRAIN, 새 WS 열림, 옛 WS 1000, 그 사이 PRICE 끊김 없음, 헤더 계속 "연결됨"
 ```

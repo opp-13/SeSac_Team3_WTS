@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
@@ -78,6 +79,22 @@ public class MarketSessionRegistry {
         return subscribers.size();
     }
 
+    /**
+     * 모든 세션을 {@code status}로 닫고 레지스트리를 비운다. 종료할 때 쓴다 ({@link WebSocketShutdown}).
+     *
+     * <p>한 세션을 닫다 실패해도 나머지는 계속 닫는다. 클라이언트는 닫힘을 받으면 다른 인스턴스로 다시 붙는다.
+     */
+    public void closeAll(CloseStatus status) {
+        for (Subscriber subscriber : subscribers.values()) {
+            try {
+                subscriber.session.close(status);
+            } catch (IOException | RuntimeException e) {
+                log.debug("WebSocket 종료 실패: sessionId={} ({})", subscriber.session.getId(), e.getMessage());
+            }
+        }
+        subscribers.clear();
+    }
+
     /** 이 인스턴스의 모든 세션이 구독 중인 종목. 시청 수요 하트비트가 쓴다 (§67). */
     public Set<String> subscribedSymbols() {
         Set<String> symbols = new HashSet<>();
@@ -93,6 +110,17 @@ public class MarketSessionRegistry {
 
     public void broadcastOrderBook(OrderBook orderBook) {
         send(orderBook.symbol(), ServerMessages.Orderbook.from(orderBook));
+    }
+
+    /** 구독과 상관없이 모든 세션에 보낸다. 종료 예고(DRAIN, §68)에 쓴다. */
+    public void sendToAll(Object payload) {
+        String json = serialize(payload);
+        if (json == null) {
+            return;
+        }
+        for (Subscriber subscriber : subscribers.values()) {
+            write(subscriber, json);
+        }
     }
 
     /** 특정 세션 하나에만 보낸다. 구독 직후 스냅샷 전송에 쓴다. */

@@ -46,6 +46,8 @@ public abstract class IntegrationTestBase {
 
         registry.add("spring.data.redis.host", VALKEY::getHost);
         registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
+        // 종료 단계 테스트가 오래 기다리지 않게 짧게 둔다 (§68).
+        registry.add("market.websocket.drain-timeout", () -> "500ms");
     }
 
     /** 조건이 참이 될 때까지 기다린다. 고정 sleep 대신 조건을 폴링한다. */

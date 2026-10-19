@@ -60,6 +60,21 @@ public final class ServerMessages {
         }
     }
 
+    /**
+     * 이 인스턴스가 곧 내려간다 (CLAUDE.md §68). 클라이언트는 이 연결을 쥔 채 새 연결을 맺고,
+     * 새 연결이 구독 확인을 받으면 이 연결을 닫는다. 그래서 계획된 종료에 시세 공백이 없다.
+     */
+    public record Drain(String type) {
+
+        public static final Drain INSTANCE = new Drain("DRAIN");
+    }
+
+    /** PING의 답. 시세가 흐르지 않는 연결도 프록시 · ALB의 유휴 시간 제한에 걸리지 않게 한다 (§68). */
+    public record Pong(String type) {
+
+        public static final Pong INSTANCE = new Pong("PONG");
+    }
+
     public record Error(String type, String message) {
 
         public static Error of(String message) {

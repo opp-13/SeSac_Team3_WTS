@@ -17,6 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -69,6 +70,41 @@ class MarketSessionRegistryTest {
         assertThat(registry.subscribe("s1", List.of("000660")))
                 .containsExactlyInAnyOrder("005930", "000660");
         assertThat(registry.unsubscribe("s1", List.of("005930"))).containsExactly("000660");
+    }
+
+    @Test
+    @DisplayName("구독과 상관없이 모든 세션에 보낸다 - 종료 예고(DRAIN, §68)")
+    void sendsToEverySessionRegardlessOfSubscription() throws IOException {
+        WebSocketSession subscribed = openSession("s1");
+        WebSocketSession idle = openSession("s2");
+        registry.register(subscribed);
+        registry.register(idle);
+        registry.subscribe("s1", List.of("005930"));
+
+        registry.sendToAll(com.team.wts.market.quote.adapter.ws.dto.ServerMessages.Drain.INSTANCE);
+
+        ArgumentCaptor<TextMessage> first = ArgumentCaptor.forClass(TextMessage.class);
+        ArgumentCaptor<TextMessage> second = ArgumentCaptor.forClass(TextMessage.class);
+        verify(subscribed).sendMessage(first.capture());
+        verify(idle).sendMessage(second.capture());
+        assertThat(first.getValue().getPayload()).isEqualTo("{\"type\":\"DRAIN\"}");
+        assertThat(second.getValue().getPayload()).isEqualTo("{\"type\":\"DRAIN\"}");
+    }
+
+    @Test
+    @DisplayName("종료할 때 모든 세션을 주어진 상태로 닫고 비운다. 한 세션의 실패가 나머지를 막지 않는다")
+    void closesEverySessionOnShutdown() throws IOException {
+        WebSocketSession broken = openSession("s1");
+        WebSocketSession healthy = openSession("s2");
+        doThrow(new IOException("이미 끊김")).when(broken).close(any(CloseStatus.class));
+        registry.register(broken);
+        registry.register(healthy);
+
+        registry.closeAll(CloseStatus.GOING_AWAY);
+
+        verify(broken).close(CloseStatus.GOING_AWAY);
+        verify(healthy).close(CloseStatus.GOING_AWAY);
+        assertThat(registry.sessionCount()).isZero();
     }
 
     @Test

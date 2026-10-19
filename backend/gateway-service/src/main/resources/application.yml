@@ -73,6 +73,11 @@ wts:
         # Authorization 헤더를 실을 수 없다. 자세한 배경은 ADR-0007 참고.
         - /api/market/**
         - /ws/market/**
+    # 브라우저 WebSocket 프록시 (CLAUDE.md §68)
+    websocket:
+      # 종료할 때 DRAIN 뒤 클라이언트가 새 연결로 옮겨 가기를 기다리는 최대 시간. 지나면 남은 세션을 1001로 닫는다.
+      # preStop 10s + 이 값 + graceful shutdown 20s 가 terminationGracePeriodSeconds(45s) 안에 들어가야 한다.
+      drain-timeout: 5s
 
 management:
   endpoints:

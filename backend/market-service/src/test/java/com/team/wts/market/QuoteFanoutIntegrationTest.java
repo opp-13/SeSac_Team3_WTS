@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.time.Duration;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
@@ -23,6 +25,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.team.wts.market.quote.adapter.ws.MarketSessionRegistry;
+import com.team.wts.market.quote.adapter.ws.WebSocketShutdown;
 import com.team.wts.market.quote.domain.MarketPrice;
 import com.team.wts.market.quote.fanout.QuoteFanoutChannels;
 import com.team.wts.market.support.IntegrationTestBase;
@@ -49,6 +53,12 @@ class QuoteFanoutIntegrationTest extends IntegrationTestBase {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private MarketSessionRegistry registry;
+
+    @Autowired
+    private WebSocketShutdown shutdown;
 
     private WebSocketSession session;
 
@@ -96,6 +106,72 @@ class QuoteFanoutIntegrationTest extends IntegrationTestBase {
         assertThat(price.path("source").asText()).isEqualTo("REALTIME");
         assertThat(orderbook).as("fan-out 호가").isNotNull();
         assertThat(orderbook.path("asks").size()).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("인스턴스가 내려가면 먼저 DRAIN을 받고, 옮겨 가지 않으면 drain-timeout 뒤 1001로 닫힌다 (§68)")
+    void drainsThenClosesWithGoingAwayOnShutdown() throws Exception {
+        BlockingQueue<JsonNode> received = new LinkedBlockingQueue<>();
+        CompletableFuture<CloseStatus> closed = new CompletableFuture<>();
+        session = new StandardWebSocketClient().execute(new TextWebSocketHandler() {
+            @Override
+            protected void handleTextMessage(WebSocketSession s, TextMessage message) throws Exception {
+                received.add(objectMapper.readTree(message.getPayload()));
+            }
+
+            @Override
+            public void afterConnectionClosed(WebSocketSession s, CloseStatus status) {
+                closed.complete(status);
+            }
+        }, new WebSocketHttpHeaders(), URI.create("ws://localhost:" + port + "/ws/market")).get(10, TimeUnit.SECONDS);
+        awaitUntil(Duration.ofSeconds(5), () -> registry.sessionCount() > 0);
+
+        // 컨텍스트를 닫지 않고 종료 단계만 실행한다. 같은 컨텍스트를 다른 테스트가 함께 쓴다.
+        // stop()은 drain-timeout(테스트 500ms)까지 기다리므로 다른 스레드에서 부른다.
+        CompletableFuture<Void> stopping = CompletableFuture.runAsync(shutdown::stop);
+
+        assertThat(next(received, "DRAIN")).as("종료 예고").isNotNull();
+        assertThat(closed.get(10, TimeUnit.SECONDS).getCode()).isEqualTo(CloseStatus.GOING_AWAY.getCode());
+        stopping.get(10, TimeUnit.SECONDS);
+        shutdown.start();
+    }
+
+    @Test
+    @DisplayName("DRAIN을 받은 클라이언트가 스스로 떠나면 종료가 drain-timeout을 기다리지 않는다 (§68)")
+    void shutdownEndsEarlyWhenClientsMoveAway() throws Exception {
+        session = new StandardWebSocketClient().execute(new TextWebSocketHandler() {
+            @Override
+            protected void handleTextMessage(WebSocketSession s, TextMessage message) throws Exception {
+                if ("DRAIN".equals(objectMapper.readTree(message.getPayload()).path("type").asText())) {
+                    s.close(CloseStatus.NORMAL); // 새 연결로 옮겨 간 클라이언트처럼
+                }
+            }
+        }, new WebSocketHttpHeaders(), URI.create("ws://localhost:" + port + "/ws/market")).get(10, TimeUnit.SECONDS);
+        awaitUntil(Duration.ofSeconds(5), () -> registry.sessionCount() > 0);
+
+        long started = System.nanoTime();
+        shutdown.stop();
+        long elapsedMillis = Duration.ofNanos(System.nanoTime() - started).toMillis();
+        shutdown.start();
+
+        assertThat(registry.sessionCount()).isZero();
+        assertThat(elapsedMillis).as("drain-timeout(500ms)보다 빨리").isLessThan(450L);
+    }
+
+    @Test
+    @DisplayName("PING에 PONG으로 답한다 - 시세가 흐르지 않는 연결도 유휴 제한에 걸리지 않게 (§68)")
+    void answersPingWithPong() throws Exception {
+        BlockingQueue<JsonNode> received = new LinkedBlockingQueue<>();
+        session = new StandardWebSocketClient().execute(new TextWebSocketHandler() {
+            @Override
+            protected void handleTextMessage(WebSocketSession s, TextMessage message) throws Exception {
+                received.add(objectMapper.readTree(message.getPayload()));
+            }
+        }, new WebSocketHttpHeaders(), URI.create("ws://localhost:" + port + "/ws/market")).get(10, TimeUnit.SECONDS);
+
+        session.sendMessage(new TextMessage("{\"type\":\"PING\"}"));
+
+        assertThat(next(received, "PONG")).isNotNull();
     }
 
     private static JsonNode next(BlockingQueue<JsonNode> queue, String type) throws InterruptedException {
