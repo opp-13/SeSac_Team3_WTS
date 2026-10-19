@@ -4,6 +4,7 @@ import { LearnstockLogo } from '../components/LearnstockLogo'
 import { Toasts } from '../components/Toasts'
 import { AccountSummary } from '../features/trading/components/AccountSummary'
 import { ConnectionStatus } from '../features/market/components/ConnectionStatus'
+import { useMarketConnection } from '../features/market/useMarketConnection'
 import { useUserStore } from '../stores/userStore'
 
 /** 주 내비게이션은 세 가지로 단순화한다 (ui-requirements §5.1). */
@@ -31,6 +32,8 @@ const HEADING: Record<string, { title: string; subtitle: string }> = {
 
 /** 모든 화면이 공유하는 머리말과 껍데기. (CLAUDE.md §27, ui-requirements §5.1) */
 export function AppLayout() {
+  // 시세 연결은 화면과 상관없이 하나다. 머리말의 연결 상태가 어느 화면에서든 실제 연결을 보여 준다.
+  useMarketConnection()
   const session = useUserStore((state) => state.session)
   const logout = useUserStore((state) => state.logout)
   const { pathname } = useLocation()
