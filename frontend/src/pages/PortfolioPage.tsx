@@ -1,3 +1,4 @@
+import { useId, useState } from 'react'
 import { Link } from 'react-router'
 
 import { Pair } from '../components/Pair'
@@ -15,11 +16,35 @@ import {
 import { usePortfolio } from '../features/portfolio/usePortfolio'
 import { useStockNames } from '../features/market/useStockNames'
 
-/** 용어 도움말. 처음 보는 사람이 막히는 단어에만 붙인다. */
+/**
+ * 용어 도움말. 처음 보는 사람이 막히는 단어에만 붙인다.
+ *
+ * <p>브라우저 기본 툴팁(title)은 1초 가까이 기다려야 뜨고, 터치 · 키보드로는 아예 뜨지 않는다.
+ * 그래서 말풍선을 직접 띄운다. 마우스를 올리면, 키보드로 초점을 옮기면, 누르면 보인다.
+ * 다른 곳을 누르거나(초점이 빠지면) Esc를 누르면 닫힌다.
+ */
 function Hint({ text }: { text: string }) {
+  const id = useId()
+  const [open, setOpen] = useState(false)
+
   return (
-    <span className="hint-mark" title={text} aria-label={text}>
-      ?
+    <span className={`hint${open ? ' hint--open' : ''}`}>
+      <button
+        type="button"
+        className="hint-mark"
+        aria-label="용어 설명"
+        aria-describedby={id}
+        onClick={() => setOpen((value) => !value)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false)
+        }}
+      >
+        ?
+      </button>
+      <span role="tooltip" id={id} className="hint__bubble">
+        {text}
+      </span>
     </span>
   )
 }

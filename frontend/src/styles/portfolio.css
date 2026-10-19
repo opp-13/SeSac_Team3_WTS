@@ -61,18 +61,70 @@
   flex: 1;
 }
 
-/* 용어 도움말 */
+/* 용어 도움말
+ * 말풍선이 카드 밖으로 나가야 해서 이 두 패널만 잘라내기를 푼다(.panel 은 overflow: hidden).
+ * 둘 다 가장자리까지 닿는 내용(표 등)이 없어 둥근 모서리가 깨지지 않는다. */
+.asset-card,
+.asset-breakdown {
+  overflow: visible;
+}
+
+.hint {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
 .hint-mark {
   display: inline-grid;
   place-items: center;
   width: 15px;
   height: 15px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
   background: var(--color-subtle);
   color: var(--color-text-muted);
+  font: inherit;
   font-size: 10px;
   font-weight: 700;
+  line-height: 1;
   cursor: help;
+}
+
+.hint-mark:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.hint__bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 20;
+  width: max-content;
+  max-width: min(240px, 80vw);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-text);
+  box-shadow: var(--shadow-toast);
+  color: #fff;
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  transform: translateX(-50%);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hint:hover .hint__bubble,
+.hint-mark:focus-visible + .hint__bubble,
+.hint--open .hint__bubble {
+  visibility: visible;
+  opacity: 1;
 }
 
 .asset-card--primary .hint-mark {
