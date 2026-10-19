@@ -156,6 +156,18 @@ class MarketApiIntegrationTest extends IntegrationTestBase {
                 .isEqualByComparingTo(new BigDecimal(body.get("price").toString())
                         .subtract(new BigDecimal(body.get("previousClose").toString())));
         assertThat(((Number) body.get("volume")).longValue()).isPositive();
+        assertThat(body.get("source")).isEqualTo("REALTIME");
+    }
+
+    @Test
+    @DisplayName("Valkey에 저장된 모의 시세는 source=SIMULATED로 나간다 (§67)")
+    void exposesSimulatedSource() {
+        fixture.seedSimulatedQuote("000660", "200500");
+
+        ResponseEntity<Map<String, Object>> response = get("/api/market/stocks/000660/price");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().get("source")).isEqualTo("SIMULATED");
     }
 
     @Test

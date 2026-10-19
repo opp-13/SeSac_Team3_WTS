@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.team.wts.market.quote.domain.MarketPrice;
 import com.team.wts.market.quote.domain.OrderBook;
+import com.team.wts.market.quote.domain.QuoteSource;
 
 /**
  * 서버가 보내는 메시지. (CLAUDE.md §25)
@@ -24,11 +25,12 @@ public final class ServerMessages {
             BigDecimal change,
             BigDecimal changeRate,
             long volume,
-            Instant timestamp) {
+            Instant timestamp,
+            QuoteSource source) {
 
         public static Price from(MarketPrice source) {
             return new Price("PRICE", source.symbol(), source.price(),
-                    source.change(), source.changeRate(), source.volume(), source.timestamp());
+                    source.change(), source.changeRate(), source.volume(), source.timestamp(), source.source());
         }
     }
 

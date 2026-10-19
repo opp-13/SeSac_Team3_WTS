@@ -29,7 +29,7 @@ public class QuoteController {
     }
 
     @GetMapping("/price")
-    @Operation(summary = "현재가 조회", description = "최신 현재가를 돌려준다. 필드 구성은 WebSocket PRICE 메시지와 같다. 실시간 갱신이 필요하면 WebSocket(/ws/market)을 구독한다. 아직 시세가 한 번도 들어오지 않았으면 503이다.")
+    @Operation(summary = "현재가 조회", description = "최신 현재가를 돌려준다. 필드 구성은 WebSocket PRICE 메시지와 같다. 실시간 갱신이 필요하면 WebSocket(/ws/market)을 구독한다. 실제 시세를 받지 않는 종목은 조회 · 구독하면 1초 안에 결정형 모의 시세(source=SIMULATED)가 생긴다. 그 전까지와 아직 시세가 한 번도 들어오지 않은 종목은 503이다.")
     @ApiErrorCodes({ErrorCode.SYMBOL_NOT_FOUND, ErrorCode.MARKET_PRICE_UNAVAILABLE})
     public PriceResponse price(@Parameter(description = "종목코드 (6자리)", example = "005930") @PathVariable String symbol) {
         return PriceResponse.from(quotes.getPrice(symbol));

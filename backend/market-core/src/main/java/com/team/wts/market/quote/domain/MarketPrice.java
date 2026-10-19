@@ -5,6 +5,8 @@ import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+
 /**
  * 한 시점의 현재가. (CLAUDE.md §25 – Server Price Update)
  *
@@ -12,13 +14,25 @@ import java.time.Instant;
  *
  * @param volume 당일 <b>누적</b> 거래량. 틱마다의 증분이 아니다.
  *               누적값이면 이벤트가 중복 전달돼도 캔들 거래량이 부풀지 않는다 (§17).
+ * @param source 실제 시세인가 모의 시세인가 (§67). 이 필드가 없던 때 Valkey에 쓴 값은 null로 읽히므로 REALTIME으로 본다.
  */
 public record MarketPrice(
         String symbol,
         BigDecimal price,
         BigDecimal previousClose,
         long volume,
-        Instant timestamp) {
+        Instant timestamp,
+        QuoteSource source) {
+
+    @JsonCreator
+    public MarketPrice {
+        source = source == null ? QuoteSource.REALTIME : source;
+    }
+
+    /** 실제 시세. KIS 어댑터가 쓴다. */
+    public MarketPrice(String symbol, BigDecimal price, BigDecimal previousClose, long volume, Instant timestamp) {
+        this(symbol, price, previousClose, volume, timestamp, QuoteSource.REALTIME);
+    }
 
     /** 전일 대비 등락폭. */
     public BigDecimal change() {

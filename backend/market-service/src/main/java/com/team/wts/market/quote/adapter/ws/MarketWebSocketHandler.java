@@ -15,12 +15,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.team.wts.market.quote.adapter.ws.dto.ClientCommand;
 import com.team.wts.market.quote.adapter.ws.dto.ServerMessages;
 import com.team.wts.market.quote.application.QuoteQueryService;
+import com.team.wts.market.quote.application.ViewerDemandRecorder;
 
 /**
  * {@code /ws/market} 핸들러. (CLAUDE.md §25)
  *
  * <p>구독 직후에는 캐시에 있는 최신 값을 즉시 한 번 보낸다.
  * 그러지 않으면 다음 틱이 올 때까지 화면이 비어 있다.
+ *
+ * <p>구독한 종목은 시청 수요로 기록한다. 실제 시세를 받지 않는 종목이면 market-ingest가 다음 틱부터
+ * 모의 시세를 만들어 같은 fan-out 경로로 보낸다 (§67).
  */
 @Component
 public class MarketWebSocketHandler extends TextWebSocketHandler {
@@ -29,13 +33,16 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
 
     private final MarketSessionRegistry registry;
     private final QuoteQueryService quotes;
+    private final ViewerDemandRecorder demand;
     private final ObjectMapper objectMapper;
 
     public MarketWebSocketHandler(MarketSessionRegistry registry,
                                   QuoteQueryService quotes,
+                                  ViewerDemandRecorder demand,
                                   ObjectMapper objectMapper) {
         this.registry = registry;
         this.quotes = quotes;
+        this.demand = demand;
         this.objectMapper = objectMapper;
     }
 
@@ -77,6 +84,7 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
     private void handleSubscribe(WebSocketSession session, List<String> symbols) {
         Set<String> subscribed = registry.subscribe(session.getId(), symbols);
         registry.sendTo(session.getId(), ServerMessages.Subscribed.of(List.copyOf(subscribed)));
+        demand.record(symbols);
 
         for (String symbol : symbols) {
             quotes.findPrice(symbol)

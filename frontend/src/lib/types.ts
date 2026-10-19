@@ -34,7 +34,14 @@ export interface PriceTick {
   volume: number
   /** UTC ISO-8601. 표시할 때 Asia/Seoul로 변환한다 (CLAUDE.md §43). */
   timestamp: string
+  /**
+   * 시세 출처. SIMULATED는 서비스가 만든 결정형 모의 시세다 (CLAUDE.md §67).
+   * 실제 시세처럼 보이게 하지 않는다 (§62.2). 이 필드가 없던 서버는 실제 시세만 보냈다.
+   */
+  source?: QuoteSource
 }
+
+export type QuoteSource = 'REALTIME' | 'SIMULATED'
 
 export interface OrderBookLevel {
   price: number

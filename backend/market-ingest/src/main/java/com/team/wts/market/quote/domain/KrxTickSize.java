@@ -1,4 +1,4 @@
-package com.team.wts.market.quote.adapter.out.provider;
+package com.team.wts.market.quote.domain;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -6,7 +6,7 @@ import java.math.RoundingMode;
 /**
  * 한국거래소 호가 가격단위. (2023년 개편 기준)
  *
- * <p>Mock 시세가 "80,123원" 같은 실제로 존재할 수 없는 값을 만들지 않게 한다.
+ * <p>모의 시세가 "80,123원" 같은 실제로 존재할 수 없는 값을 만들지 않게 한다.
  * Phase 3의 지정가 주문 검증에서도 같은 규칙을 쓴다.
  */
 public final class KrxTickSize {

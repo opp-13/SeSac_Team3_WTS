@@ -1,4 +1,4 @@
-package com.team.wts.market.quote.adapter.out.provider;
+package com.team.wts.market.quote.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

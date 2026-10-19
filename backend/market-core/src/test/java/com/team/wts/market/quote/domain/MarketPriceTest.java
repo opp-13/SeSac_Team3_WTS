@@ -8,6 +8,9 @@ import java.time.Instant;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 class MarketPriceTest {
 
@@ -52,6 +55,20 @@ class MarketPriceTest {
         MarketPrice price = price(new BigDecimal("80000"), new BigDecimal("80000"));
 
         assertThat(price.isStale(Duration.ofSeconds(5), NOW.plusSeconds(6))).isTrue();
+    }
+
+    @Test
+    @DisplayName("source 필드가 없던 때 Valkey에 쓴 값은 실제 시세로 읽힌다. 모의 시세는 그대로 왕복한다 (§67)")
+    void readsLegacyJsonAsRealtimeAndRoundTripsSource() throws Exception {
+        ObjectMapper mapper = Jackson2ObjectMapperBuilder.json().build();
+        String legacy = "{\"symbol\":\"005930\",\"price\":81000,\"previousClose\":80000,\"volume\":1000,"
+                + "\"timestamp\":\"2026-09-21T01:30:00Z\"}";
+
+        assertThat(mapper.readValue(legacy, MarketPrice.class).source()).isEqualTo(QuoteSource.REALTIME);
+
+        MarketPrice simulated = new MarketPrice("005930", new BigDecimal("81000"), new BigDecimal("80000"), 1_000L,
+                NOW, QuoteSource.SIMULATED);
+        assertThat(mapper.readValue(mapper.writeValueAsString(simulated), MarketPrice.class)).isEqualTo(simulated);
     }
 
     private static MarketPrice price(BigDecimal value, BigDecimal previousClose) {

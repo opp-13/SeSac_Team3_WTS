@@ -15,6 +15,7 @@ import com.team.wts.market.quote.domain.MarketPrice;
 import com.team.wts.market.quote.domain.OrderBook;
 import com.team.wts.market.quote.domain.OrderBookLevel;
 import com.team.wts.market.quote.domain.QuoteCache;
+import com.team.wts.market.quote.domain.QuoteSource;
 import com.team.wts.market.stock.domain.Market;
 import com.team.wts.market.stock.domain.Stock;
 import com.team.wts.market.stock.domain.StockRepository;
@@ -82,6 +83,12 @@ public class MarketDataFixture {
         quotes.savePrice(latest);
         quotes.saveOrderBook(orderBook(symbol, new BigDecimal(price)));
         return latest;
+    }
+
+    /** market-ingest의 모의 시세가 써 둔 것과 같은 값 (§67). */
+    public void seedSimulatedQuote(String symbol, String price) {
+        quotes.savePrice(new MarketPrice(symbol, new BigDecimal(price), new BigDecimal("200000"), 1_000L,
+                Instant.now(), QuoteSource.SIMULATED));
     }
 
     /** 확정된 직전 봉(DB)과 진행 중인 봉(Valkey). */

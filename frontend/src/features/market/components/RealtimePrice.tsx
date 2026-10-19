@@ -55,6 +55,12 @@ export function RealtimePrice({ stock }: Props) {
             <span className={`quote__change price--${direction}`}>
               {formatPriceChange(tick.change, tick.changeRate)}
             </span>
+            {/* 실제 시세를 받지 않는 종목은 모의 시세다. 숨기지 않는다 (CLAUDE.md §62.2, §67). 표시 방식은 Figma를 따른다 */}
+            {tick.source === 'SIMULATED' && (
+              <span className="badge" title="실제 시세를 받지 않는 종목이라 서비스가 만든 모의 시세입니다">
+                모의 시세
+              </span>
+            )}
           </div>
 
           <dl className="quote__stats">

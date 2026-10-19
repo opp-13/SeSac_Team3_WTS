@@ -1352,6 +1352,8 @@ Mock Mode는:
 
 > **Phase 8 →** 고정 5종목이 아니라 종목 마스터 전체가 대상이다. 수요가 있는 종목만 가격을 만들고, 출발 가격은 마스터 기준가다.
 > 마스터는 저장소의 스냅샷 CSV로 채운다. 네트워크 없이 뜬다 (§57.1, §57.2).
+>
+> **§67 →** random walk는 결정형 모의 시세로 바뀌었다. 같은 시각이면 언제 계산해도 같은 값이다. kis 모드에서도 실시간으로 받지 않는 종목에 같은 모델을 쓴다.
 
 ---
 
@@ -2340,6 +2342,9 @@ Mock 모드:
 - Seed 또는 고정 시퀀스로 재현할 수 있어야 한다 (§31).
 ```
 
+> **§67 →** Phase 8-2 전에 시청 수요(`market:demand:viewers`)와 결정형 모의 시세를 먼저 넣었다.
+> 수요 키는 종목별 키가 아니라 정렬 집합 하나다. KIS 폴링 · 스냅샷 계층이 들어오면 모의 시세는 그 계층 밖의 종목에만 남는다.
+
 ## 57.3 프론트엔드
 
 ```text
@@ -3108,6 +3113,7 @@ trading-service의 나머지는 이미 다중 인스턴스에 안전하다.
   (KIS 실시간 수신용 WebSocket 클라이언트는 ingest에 있다.)
 - 이름: 사용자 요청을 받는 쪽이 market-service 이름을 그대로 쓴다. gateway 라우트 · Service · OpenAPI 생성은 바뀌지 않는다.
 - 두 앱은 같은 DB(wts_market) · 같은 Valkey를 쓴다. 쓰는 쪽은 ingest, 읽는 쪽은 api다 (예외: 없음).
+  → §67: 예외 하나. 시청 수요 키(`market:demand:viewers`)는 api가 쓰고 ingest가 읽는다. 시세 값은 여전히 ingest만 쓴다.
   Flyway는 두 앱 모두 기동 시 적용을 시도한다. Flyway 잠금이 한쪽만 적용하게 한다.
 - 로컬: run-backend.sh 가 둘 다 띄운다. market-ingest 포트는 MARKET_INGEST_PORT(기본 8084, health 확인용).
 - Recreate: 옛 ingest를 완전히 내린 뒤 새 ingest를 띄운다. 그 사이 수 초 동안 시세가 멈춘다.
@@ -3191,4 +3197,93 @@ ADR-0020 4항 "market-service · trading-service는 replica 1"  → market-inges
 §6.2 "market-service" 한 서비스                               → market-ingest(수집) + market-service(조회 · 송신) + market-core
 §63 Phase 10 "각 인스턴스가 market.price.updated를 소비해 송신" → Valkey pub/sub (호가가 Kafka에 없다)
 §63 Phase 10 "리더 한 대만 수집(리더 선출)"                   → 수집을 별도 앱(replica 1)으로 분리
+```
+
+---
+
+# 67. 결정형 모의 시세 – 실제 시세를 받지 않는 종목
+
+> 고정 종목(§57.2, `market.pinned-symbols`) 밖의 종목에도 시세를 준다. ADR-0023.
+> Phase 8-2의 KIS 수요 기반 구독 전까지의 빈칸을 채우고, Mock 모드의 random walk도 대체한다.
+
+## 67.1 원칙
+
+```text
+1. 시세는 (종목코드, 기준가, 슬롯, seed)의 순수 함수다. 같은 순간이면 새로고침 · 재시작 · 파드 수와 상관없이 같은 값이다.
+2. 계산하는 곳은 market-ingest 하나다 (§66.2). market-service(api)는 "누가 보고 있다"만 기록한다.
+3. 실제 시세를 받는 종목(MarketDataProvider.realtimeSymbols())은 만들지 않는다. 한 종목에 실제와 모의가 섞이지 않는다.
+4. 출처를 숨기지 않는다 (§62.2). 시세에 source = REALTIME | SIMULATED 가 실리고, 화면은 "모의 시세"로 표시한다.
+5. 만든 뒤의 경로는 실제 시세와 같다 (QuoteIngestService → Valkey · Kafka · pub/sub → 1분봉 · 중계 · 체결).
+```
+
+## 67.2 모델 (market-ingest `quote/synthetic/`)
+
+```text
+StableHash           FNV-1a 64(종목코드) + SplitMix64. long 연산만. Random · String.hashCode · Math.sin · 부동소수점을 쓰지 않는다
+SyntheticPriceModel  슬롯     n = floor(epochMillis / slot). 시세 시각 = 슬롯 시작 (지금 시각이 아니다)
+                     등락     value noise 4옥타브 (1시간 ±600bp, 10분 ±200bp, 1분 ±60bp, 5초 ±15bp), 정수 선형보간
+                     가격     기준가 × (10000 + bp) / 10000 → 상 · 하한가(±30%) 안 → KRX 호가단위 (KrxTickSize)
+                     거래량   KST 자정부터의 누적. 하루 안에서 줄지 않는다
+                     호가     현재가에서 호가단위씩 5단계, 잔량은 해시
+                     기준가 = 전일 종가 = 종목 마스터 base_price (§57.1)
+SyntheticQuoteFeed   대상 = (고정 종목 ∪ 시청 수요) − realtimeSymbols(). 종목별 마지막 슬롯을 기억해 같은 슬롯을 다시 내지 않는다
+```
+
+- 알고리즘 · 상수를 바꾸면 모든 종목의 시세 경로가 바뀐다. 골든 값 테스트가 막는다. 바꿀 때는 ADR-0023에 적는다.
+- Mock 모드에는 실제 시세 공급자가 없다 (`MockMarketDataAdapter` 삭제). 고정 종목도 이 모델이 만든다.
+
+## 67.3 시청 수요 (§57.2 · §60.2의 일부를 먼저 넣는다)
+
+```text
+Valkey  market:demand:viewers   정렬 집합. member = 종목코드, score = 만료 시각 (epoch ms)
+쓰기    market-service  WebSocket SUBSCRIBE · GET .../price · GET .../orderbook 즉시
+                        + 10초마다 이 인스턴스의 구독 종목 전체 (market.demand.heartbeat-ms)
+                        수명 market.demand.viewer-ttl (30초). UNSUBSCRIBE는 지우지 않는다 (만료되게 둔다)
+                        종목코드 형식(StockSymbol)이 아닌 값은 버린다
+읽기    market-ingest   틱마다 만료분 삭제 → 최근 기록 순 최대 market.synthetic.max-symbols (100)
+```
+
+## 67.4 설정
+
+| 앱 | 속성 | 환경변수 | 기본 |
+|---|---|---|---|
+| market-ingest | `market.synthetic.enabled` | `MARKET_SYNTHETIC_ENABLED` | `true` |
+| market-ingest | `market.synthetic.slot` | `MARKET_SYNTHETIC_SLOT` | `1s` (`market.price.max-age`보다 짧아야 한다. 기동 시 검사) |
+| market-ingest | `market.synthetic.tick-interval` | | 슬롯과 같다 |
+| market-ingest | `market.synthetic.seed` | `MARKET_SYNTHETIC_SEED` | `0` (바꾸면 모든 경로가 바뀐다) |
+| market-ingest | `market.synthetic.max-symbols` | `MARKET_SYNTHETIC_MAX_SYMBOLS` | `100` |
+| market-service | `market.demand.viewer-ttl` | | `30s` |
+| market-service | `market.demand.heartbeat-ms` | | `10000` |
+
+`market.mock.*` (`MARKET_MOCK_TICK_INTERVAL`, `MARKET_MOCK_SEED`)는 없어졌다.
+
+## 67.5 계약 변경
+
+```text
+GET /api/market/stocks/{symbol}/price   source (REALTIME | SIMULATED) 추가
+WS  PRICE                               source 추가
+Valkey market:price:{symbol}            source 추가. 없는 옛 값은 REALTIME으로 읽는다. trading은 모르는 필드를 무시한다
+Kafka market.price.updated              바뀌지 않는다
+```
+
+## 67.6 제한
+
+```text
+- 아무도 보지 않는 종목의 미체결 지정가는 체결되지 않는다 (수요가 없으면 시세를 만들지 않는다).
+  주문 수요는 Phase 8-2에서 §65.6의 방향 규칙을 따라 넣는다.
+- 처음 여는 종목은 다음 틱(최대 1초)까지 현재가 조회가 503이다. WebSocket은 시세가 생기면 바로 받는다.
+- 모의 시세는 24시간 움직인다. 정규장과 무관하다.
+```
+
+## 67.7 테스트
+
+```text
+단위   StableHash: FNV-1a 표준 벡터, 골든 값
+       SyntheticPriceModel: 골든 값, 같은 입력 = 같은 출력 (인스턴스 · 반복), 슬롯 안 고정 · 시각 = 슬롯 시작,
+                            호가단위 · 상하한, 거래량 단조 · KST 자정 리셋, seed · 종목에 따라 다른 경로
+       SyntheticQuoteFeed: 실시간 종목 제외, Mock 모드 고정 종목, 수요 추가 · 마스터에 없는 종목 건너뜀,
+                           같은 슬롯 1회, 재시작해도 같은 값
+       ViewerDemandRecorder: TTL, 형식이 틀린 종목코드 버림 / MarketPrice: source 없는 옛 JSON
+통합   ingest: 틱 → Valkey(SIMULATED) · pub/sub · Kafka → 1분봉, 수요 기록 → 다음 틱에 시세, 재시작 후 같은 시각 = Valkey 바이트 동일
+       api: SUBSCRIBE → 수요 키, 현재가 응답의 source
 ```

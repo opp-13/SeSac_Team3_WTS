@@ -3,6 +3,8 @@
 CLAUDE.md §47 Phase 2의 산출물 정리.
 **완료조건: WTS 화면에서 가격이 실시간으로 변한다.**
 
+> **2026-10-19 갱신 (CLAUDE.md §67, ADR-0023):** `MockMarketDataAdapter`의 random walk는 결정형 모의 시세(`SyntheticQuoteFeed`, `SyntheticPriceModel`)로 바뀌었다. 아래는 Phase 2 당시 구조다.
+
 ## 시세 한 건이 흐르는 경로
 
 ```text

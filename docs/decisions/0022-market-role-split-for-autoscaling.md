@@ -2,7 +2,7 @@
 
 - 상태: 제안됨. EKS에서 market-service를 2개 이상으로 늘려도 시세 · 호가 · 차트가 갱신되고, `ALREADY IN USE appkey`가 없으면 채택으로 바꾼다
 - 날짜: 2026-10-16
-- 관련: CLAUDE.md §66, §65, §63 Phase 10, §18, §6.2. 갱신: ADR-0020 4항(replica 1), ADR-0019(서비스마다 Dockerfile, market-ingest 추가). 참조: trader-terraform-sessac ADR-0040(metrics-server), ADR-0047(앱별 Pod Identity)
+- 관련: CLAUDE.md §66, §65, §63 Phase 10, §18, §6.2. 갱신: ADR-0020 4항(replica 1), ADR-0019(서비스마다 Dockerfile, market-ingest 추가). 참조: trader-terraform-sessac ADR-0040(metrics-server), ADR-0047(앱별 Pod Identity). 갱신됨: ADR-0023(시청 수요 키는 market-service가 쓴다, Mock 시세 생성기는 결정형 모의 시세로 바뀌었다)
 
 ## 배경
 

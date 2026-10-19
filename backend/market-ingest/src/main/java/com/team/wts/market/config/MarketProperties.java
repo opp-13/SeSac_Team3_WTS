@@ -1,6 +1,5 @@
 package com.team.wts.market.config;
 
-import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
 
@@ -10,10 +9,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 시세 관련 설정. (CLAUDE.md §19, §21, §31)
  *
  * @param provider      mock | kis. 어댑터 선택 기준이다.
- * @param pinnedSymbols 항상 시세를 받는 종목 (§57.2의 고정 종목). Phase 8-1에서는 시세 공급자가
- *                      이 종목만 구독한다. 수요 기반 구독은 Phase 8-2에서 붙인다.
+ * @param pinnedSymbols 아무도 보지 않아도 항상 시세가 있는 종목 (§57.2의 고정 종목). kis 모드에서는 KIS 실시간으로 받고,
+ *                      mock 모드에서는 모의 시세가 만든다. 나머지는 보는 사람이 있을 때 모의 시세가 만든다 (§67).
+ *                      KIS 수요 기반 구독은 Phase 8-2에서 붙인다.
  * @param master        종목 마스터 동기화 (§57.1)
- * @param mock          Mock Market Mode 동작 파라미터
+ * @param synthetic     결정형 모의 시세 (§67). Mock 모드에서는 모든 종목, kis 모드에서는 실시간으로 받지 않는 종목
  * @param price         시세 유효성 판단 기준
  * @param feedRelay     corebank로 시세를 중계한다 (§65)
  */
@@ -22,15 +22,20 @@ public record MarketProperties(
         String provider,
         List<String> pinnedSymbols,
         Master master,
-        Mock mock,
+        Synthetic synthetic,
         Price price,
         FeedRelay feedRelay) {
 
     public MarketProperties {
         pinnedSymbols = pinnedSymbols == null ? List.of() : List.copyOf(pinnedSymbols);
         master = master == null ? new Master(null, null, null) : master;
-        mock = mock == null ? new Mock(null, null, null, null) : mock;
+        synthetic = synthetic == null ? new Synthetic(null, null, null, null, null) : synthetic;
         price = price == null ? new Price(null) : price;
+        // 모의 시세의 시각은 슬롯 시작이다. 슬롯이 max-age보다 길면 막 만든 시세도 낡은 것으로 보여 시장가 주문이 거절된다 (§11).
+        if (synthetic.slot().compareTo(price.maxAge()) >= 0) {
+            throw new IllegalArgumentException("market.synthetic.slot(" + synthetic.slot()
+                    + ") 은 market.price.max-age(" + price.maxAge() + ") 보다 짧아야 한다.");
+        }
         feedRelay = feedRelay == null ? new FeedRelay(false, null, null, null, null) : feedRelay;
     }
 
@@ -54,21 +59,31 @@ public record MarketProperties(
     }
 
     /**
-     * @param tickInterval  시세 생성 주기
-     * @param minChangeRate 한 틱당 최소 변동률 (0.001 = 0.1%)
-     * @param maxChangeRate 한 틱당 최대 변동률 (0.005 = 0.5%)
-     * @param seed          난수 시드. 비우면 실행마다 다른 흐름. 테스트는 고정값을 넣어 재현한다 (§31).
+     * 결정형 모의 시세 (CLAUDE.md §67, ADR-0023). 실제 시세를 받지 않는 종목에 시세를 준다.
+     *
+     * @param enabled      끄면 실제 시세를 받는 종목만 시세가 있다
+     * @param slot         가격이 바뀌는 단위 시간. 같은 슬롯 안에서는 언제 계산해도 같은 값이다.
+     *                     시세 시각이 슬롯 시작이라 {@code market.price.max-age}보다 짧아야 시장가 주문이 받아들여진다
+     * @param tickInterval 수요를 확인하고 시세를 내보내는 주기. 비우면 슬롯과 같다. 슬롯보다 짧아도 같은 슬롯은 다시 내보내지 않는다
+     * @param seed         해시 seed. 바꾸면 모든 종목의 시세 경로가 바뀐다. 고정값이 기본이다
+     * @param maxSymbols   한 번에 모의 시세를 만드는 수요 종목 수 상한. 고정 종목은 따로 센다
      */
-    public record Mock(
+    public record Synthetic(
+            Boolean enabled,
+            Duration slot,
             Duration tickInterval,
-            BigDecimal minChangeRate,
-            BigDecimal maxChangeRate,
-            Long seed) {
+            Long seed,
+            Integer maxSymbols) {
 
-        public Mock {
-            tickInterval = tickInterval == null ? Duration.ofSeconds(1) : tickInterval;
-            minChangeRate = minChangeRate == null ? new BigDecimal("0.001") : minChangeRate;
-            maxChangeRate = maxChangeRate == null ? new BigDecimal("0.005") : maxChangeRate;
+        public Synthetic {
+            enabled = enabled == null || enabled;
+            slot = slot == null ? Duration.ofSeconds(1) : slot;
+            tickInterval = tickInterval == null ? slot : tickInterval;
+            seed = seed == null ? 0L : seed;
+            maxSymbols = maxSymbols == null ? 100 : maxSymbols;
+            if (slot.isNegative() || slot.isZero() || tickInterval.isNegative() || tickInterval.isZero()) {
+                throw new IllegalArgumentException("market.synthetic.slot · tick-interval 은 0보다 커야 한다.");
+            }
         }
     }
 

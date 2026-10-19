@@ -72,6 +72,17 @@ class MarketSessionRegistryTest {
     }
 
     @Test
+    @DisplayName("모든 세션의 구독 종목을 합쳐 돌려준다 - 시청 수요 하트비트용 (§67)")
+    void unionsSubscribedSymbolsAcrossSessions() {
+        registry.register(openSession("s1"));
+        registry.register(openSession("s2"));
+        registry.subscribe("s1", List.of("005930", "000660"));
+        registry.subscribe("s2", List.of("000660", "000020"));
+
+        assertThat(registry.subscribedSymbols()).containsExactlyInAnyOrder("005930", "000660", "000020");
+    }
+
+    @Test
     @DisplayName("세션마다 구독이 독립적이다")
     void keepsSubscriptionsPerSession() throws IOException {
         WebSocketSession samsung = openSession("s1");

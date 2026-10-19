@@ -1,6 +1,7 @@
 package com.team.wts.market.quote.adapter.ws;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,6 +76,13 @@ public class MarketSessionRegistry {
 
     public int sessionCount() {
         return subscribers.size();
+    }
+
+    /** 이 인스턴스의 모든 세션이 구독 중인 종목. 시청 수요 하트비트가 쓴다 (§67). */
+    public Set<String> subscribedSymbols() {
+        Set<String> symbols = new HashSet<>();
+        subscribers.values().forEach(subscriber -> symbols.addAll(subscriber.symbols));
+        return symbols;
     }
 
     // ── 송신 (QuoteFanoutSubscriber가 부른다) ────────────────

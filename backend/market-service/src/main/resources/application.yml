@@ -38,6 +38,15 @@ spring:
       port: ${VALKEY_PORT:6379}
       timeout: 2s
 
+market:
+  # 화면이 보는 종목을 Valkey에 시청 수요로 기록한다 (CLAUDE.md §57.2, §67).
+  # market-ingest가 읽어 실제 시세를 받지 않는 종목의 모의 시세를 만든다.
+  demand:
+    # 기록 하나의 수명. 화면을 닫은 뒤 이만큼 지나면 모의 시세도 멈춘다. 하트비트보다 넉넉히 길게 둔다.
+    viewer-ttl: 30s
+    # 구독 중인 종목의 수요를 다시 기록하는 주기
+    heartbeat-ms: 10000
+
 management:
   endpoints:
     web:

@@ -16,7 +16,7 @@ import com.team.wts.market.quote.domain.QuoteCache;
 /**
  * 공급자가 밀어 넣은 시세를 처리한다. (CLAUDE.md §6.2)
  *
- * <p>Mock이든 KIS든 여기로 들어오면 이후 경로는 같다.
+ * <p>모의 시세든 KIS든 여기로 들어오면 이후 경로는 같다.
  *
  * <pre>
  * 시세 수신

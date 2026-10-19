@@ -90,8 +90,9 @@ market:
   # kis : 한국투자증권 OpenAPI 연동 (Phase 6)
   provider: ${MARKET_PROVIDER:mock}
 
-  # 항상 시세를 받는 종목 (CLAUDE.md §57.2의 고정 종목).
-  # Phase 8-1에서는 시세 공급자가 이 종목만 구독한다. 수요 기반 구독은 Phase 8-2에서 붙인다.
+  # 아무도 보지 않아도 항상 시세가 있는 종목 (CLAUDE.md §57.2의 고정 종목).
+  # kis 모드: KIS 실시간으로 받는다. 수요 기반 KIS 구독은 Phase 8-2에서 붙인다.
+  # mock 모드: 모의 시세가 만든다. 나머지 종목은 누가 볼 때 모의 시세가 만든다 (§67).
   # 종목 정보(이름 · 기준가)는 여기 두지 않는다. 종목 마스터(stocks 테이블)에서 읽는다.
   pinned-symbols: ${MARKET_PINNED_SYMBOLS:005930,000660,035420,035720,005380}
 
@@ -105,13 +106,16 @@ market:
     # 매 영업일 장 시작 전 (Asia/Seoul)
     sync-cron: "0 0 8 * * MON-FRI"
 
-  mock:
-    tick-interval: ${MARKET_MOCK_TICK_INTERVAL:1s}
-    # 한 틱당 변동률 0.1% ~ 0.5% (CLAUDE.md §31)
-    min-change-rate: 0.001
-    max-change-rate: 0.005
-    # 시드를 주면 가격 흐름이 재현된다. 비우면 실행마다 달라진다.
-    seed: ${MARKET_MOCK_SEED:}
+  # 결정형 모의 시세 (CLAUDE.md §67, ADR-0023). 실제 시세를 받지 않는 종목에 시세를 준다.
+  # 가격 = f(종목, 기준가, 슬롯, seed). 같은 순간이면 재시작 · 새로고침 · 파드 수와 상관없이 같은 값이다.
+  synthetic:
+    enabled: ${MARKET_SYNTHETIC_ENABLED:true}
+    # 가격이 바뀌는 단위. 시세 시각이 슬롯 시작이라 price.max-age(5s)보다 짧아야 한다 (기동 시 검사).
+    slot: ${MARKET_SYNTHETIC_SLOT:1s}
+    # 바꾸면 모든 종목의 시세 경로가 바뀐다. 운영 중에는 바꾸지 않는다.
+    seed: ${MARKET_SYNTHETIC_SEED:0}
+    # 한 번에 모의 시세를 만드는 "보고 있는" 종목 수 상한. 고정 종목은 따로 센다.
+    max-symbols: ${MARKET_SYNTHETIC_MAX_SYMBOLS:100}
 
   price:
     # 이 시간을 넘긴 시세는 stale. 시장가 주문 거절 기준 (CLAUDE.md §11).

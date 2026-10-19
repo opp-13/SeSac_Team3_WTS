@@ -74,6 +74,10 @@ class QuoteFanoutIntegrationTest extends IntegrationTestBase {
 
         session.sendMessage(new TextMessage("{\"type\":\"SUBSCRIBE\",\"symbols\":[\"" + SAMSUNG + "\"]}"));
         assertThat(next(received, "SUBSCRIBED")).isNotNull();
+        // 구독한 종목은 시청 수요로 남는다. market-ingest가 읽어 모의 시세를 만든다 (§67).
+        Double expiresAt = redis.opsForZSet().score("market:demand:viewers", SAMSUNG);
+        assertThat(expiresAt).as("시청 수요").isNotNull();
+        assertThat(expiresAt.longValue()).isGreaterThan(System.currentTimeMillis());
         // 구독 스냅샷(PRICE · ORDERBOOK)을 비운다. 이후 오는 것은 fan-out 경로뿐이다.
         drain(received, Duration.ofSeconds(1));
 
@@ -89,6 +93,7 @@ class QuoteFanoutIntegrationTest extends IntegrationTestBase {
         assertThat(price).as("fan-out 시세").isNotNull();
         assertThat(price.path("symbol").asText()).isEqualTo(SAMSUNG);
         assertThat(price.path("price").decimalValue()).isEqualByComparingTo("80700");
+        assertThat(price.path("source").asText()).isEqualTo("REALTIME");
         assertThat(orderbook).as("fan-out 호가").isNotNull();
         assertThat(orderbook.path("asks").size()).isEqualTo(5);
     }

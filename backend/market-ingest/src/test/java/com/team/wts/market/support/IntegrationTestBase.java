@@ -18,7 +18,7 @@ import org.testcontainers.utility.DockerImageName;
  * <p>MySQL · Valkey · Kafka를 실제로 띄운다. 시세 한 건이 Valkey 저장 → Kafka 발행 · pub/sub 발행 →
  * 1분봉 집계까지 흘러가는지를 실제 인프라 위에서 확인하기 위해서다.
  *
- * <p>Mock 스트림의 스케줄러는 사실상 꺼둔다(주기 1시간). 테스트가 {@code tick()}을 직접 호출해
+ * <p>모의 시세의 스케줄러는 사실상 꺼둔다(주기 1시간). 테스트가 {@code tick(Instant)}을 직접 호출해
  * 시점을 통제한다.
  */
 @Tag("integration") // Docker가 필요하다. CI는 단위 테스트와 다른 단계에서 돌린다 (CLAUDE.md §37)
@@ -59,9 +59,8 @@ public abstract class IntegrationTestBase {
         // 테스트 시작 전에 발행된 메시지도 놓치지 않게 한다.
         registry.add("spring.kafka.consumer.auto-offset-reset", () -> "earliest");
 
-        // 가격 흐름을 재현 가능하게 고정하고, 스케줄러가 끼어들지 않게 주기를 길게 둔다 (§31).
-        registry.add("market.mock.seed", () -> 20260921L);
-        registry.add("market.mock.tick-interval", () -> "1h");
+        // 모의 시세는 시각만 같으면 같은 값이다 (§67). 스케줄러가 끼어들지 않게 주기만 길게 둔다.
+        registry.add("market.synthetic.tick-interval", () -> "1h");
     }
 
     /**

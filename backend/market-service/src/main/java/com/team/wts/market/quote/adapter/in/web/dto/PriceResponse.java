@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 import com.team.wts.market.quote.domain.MarketPrice;
+import com.team.wts.market.quote.domain.QuoteSource;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -26,10 +27,13 @@ public record PriceResponse(
         @Schema(description = "당일 누적 거래량 (주). 틱 증분이 아니다", example = "159379")
         long volume,
         @Schema(description = "시세 시각 (UTC, ISO-8601)", example = "2026-09-22T08:12:44.101Z")
-        Instant timestamp) {
+        Instant timestamp,
+        @Schema(description = "시세 출처. REALTIME = 실제 시세(KIS), SIMULATED = 서비스가 만든 결정형 모의 시세. "
+                + "모의 시세는 같은 시각이면 언제 조회해도 같은 값이다", example = "REALTIME")
+        QuoteSource source) {
 
     public static PriceResponse from(MarketPrice source) {
         return new PriceResponse(source.symbol(), source.price(), source.previousClose(),
-                source.change(), source.changeRate(), source.volume(), source.timestamp());
+                source.change(), source.changeRate(), source.volume(), source.timestamp(), source.source());
     }
 }

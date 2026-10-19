@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
@@ -23,7 +24,7 @@ import com.team.wts.market.quote.domain.MarketPrice;
 /**
  * 한국투자증권 OpenAPI 시세 공급자. (CLAUDE.md §19, §20, §47 Phase 6)
  *
- * <p>{@code MARKET_PROVIDER=kis} 일 때만 만들어진다. Mock 어댑터와 배타적이다.
+ * <p>{@code MARKET_PROVIDER=kis} 일 때만 만들어진다. 여기서 받지 않는 종목은 결정형 모의 시세가 채운다 (§67).
  *
  * <p>기동 순서:
  * <ol>
@@ -32,7 +33,7 @@ import com.team.wts.market.quote.domain.MarketPrice;
  *       수요 기반 등록 · 해제는 Phase 8-2다 (§57.2)</li>
  * </ol>
  *
- * <p>시세가 들어오는 이후 경로는 Mock과 완전히 같다. {@link MarketDataListener}로 넘기면
+ * <p>시세가 들어오는 이후 경로는 모의 시세와 완전히 같다. {@link MarketDataListener}로 넘기면
  * Valkey · Kafka · WebSocket 브로드캐스트가 순서대로 일어난다.
  */
 @Component
@@ -49,6 +50,8 @@ public class KisMarketDataAdapter implements MarketDataProvider, SmartLifecycle 
     private final KisWebSocketClient webSocketClient;
 
     private final Map<String, MarketPrice> latestPrices = new ConcurrentHashMap<>();
+    /** 실시간 등록한 종목. 기동 전부터 고정 종목을 담아 둔다. 모의 시세가 그 사이에 끼어들지 않게 한다 (§67). */
+    private final Set<String> registered = ConcurrentHashMap.newKeySet();
 
     private volatile boolean running;
 
@@ -57,6 +60,7 @@ public class KisMarketDataAdapter implements MarketDataProvider, SmartLifecycle 
                                 Clock clock) {
         requireCredentials(properties);
         this.pinnedSymbols = marketProperties.pinnedSymbols();
+        this.registered.addAll(pinnedSymbols);
         this.listener = listener;
         this.properties = properties;
 
@@ -88,12 +92,19 @@ public class KisMarketDataAdapter implements MarketDataProvider, SmartLifecycle 
     }
 
     @Override
+    public Set<String> realtimeSymbols() {
+        return Set.copyOf(registered);
+    }
+
+    @Override
     public void subscribe(String symbol) {
+        registered.add(symbol);
         webSocketClient.subscribe(symbol);
     }
 
     @Override
     public void unsubscribe(String symbol) {
+        registered.remove(symbol);
         webSocketClient.unsubscribe(symbol);
     }
 
