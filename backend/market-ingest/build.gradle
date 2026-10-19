@@ -10,6 +10,8 @@ dependencies {
     implementation 'org.springframework.kafka:spring-kafka'
     // KIS 실시간 시세는 WebSocket 클라이언트로 받는다 (KisWebSocketClient). 브라우저용 WebSocket 서버는 market-service 에 있다.
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    // Prometheus 수집용 /actuator/prometheus (부하 점검, CLAUDE.md §63 Phase 10 관측성)
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     testImplementation 'org.testcontainers:junit-jupiter'

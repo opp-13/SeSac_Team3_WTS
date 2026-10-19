@@ -9,6 +9,8 @@ dependencies {
     // OpenAPI 3 명세 + Swagger UI. 컨트롤러에서 생성한다.
     implementation libs.springdoc.openapi
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    // Prometheus 수집용 /actuator/prometheus (부하 점검, CLAUDE.md §63 Phase 10 관측성)
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     testImplementation 'org.testcontainers:junit-jupiter'

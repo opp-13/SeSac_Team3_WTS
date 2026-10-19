@@ -11,6 +11,8 @@ dependencies {
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-mysql'
     runtimeOnly 'com.mysql:mysql-connector-j'
+    // Prometheus 수집용 /actuator/prometheus (부하 점검, CLAUDE.md §63 Phase 10 관측성)
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
     // 통합 테스트는 실제 MySQL에 Flyway 마이그레이션을 적용해 검증한다 (CLAUDE.md §35, §36).
     // 버전은 Spring Boot BOM이 관리한다.

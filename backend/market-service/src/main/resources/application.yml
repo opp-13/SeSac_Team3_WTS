@@ -51,7 +51,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # prometheus: 클러스터 안에서만 닿는다 (frontend nginx는 /api · /ws만, gateway 라우트도 /api/** · /ws/**만 넘긴다)
+        include: health,info,metrics,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # 요청 지연 분위수(p95 · p99)를 Prometheus에서 계산하려면 히스토그램 버킷이 필요하다.
+        # 점이 든 키는 대괄호로 감싼다. 그래야 "http.server.requests" 한 키로 바인딩된다.
+        "[http.server.requests]": true
   endpoint:
     health:
       show-details: always

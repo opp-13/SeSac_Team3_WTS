@@ -5,4 +5,6 @@ dependencies {
     implementation project(':common')
 
     implementation 'org.springframework.cloud:spring-cloud-starter-gateway-server-webflux'
+    // Prometheus 수집용 /actuator/prometheus (부하 점검, CLAUDE.md §63 Phase 10 관측성)
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 }
