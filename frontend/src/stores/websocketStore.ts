@@ -18,23 +18,30 @@ interface WebSocketState {
  */
 let socket: MarketSocket | null = null
 
+/**
+ * 소켓은 처음 필요할 때 만든다. 만들기만 하고 연결은 열지 않는다 - 연결은 앱 껍데기의 connect만 연다.
+ *
+ * <p>구독은 화면(자식)의 effect가, 연결은 앱 껍데기(부모)의 effect가 맡는데 React는 자식 effect를 먼저
+ * 돌린다. 그래서 첫 로드에서는 subscribe가 connect보다 먼저 온다. 그때 소켓이 없다고 구독을 버리면 처음
+ * 보이는 종목은 끝까지 시세가 오지 않는다. 소켓이 종목을 기억했다가 연결되는 순간 보낸다.
+ */
+function getSocket(set: (state: Partial<WebSocketState>) => void): MarketSocket {
+  socket ??= new MarketSocket({
+    onStatus: (status) => set({ status }),
+    onPrice: (price) => useMarketStore.getState().applyPrice(price),
+    onOrderBook: (orderBook) => useMarketStore.getState().applyOrderBook(orderBook),
+  })
+  return socket
+}
+
 export const useWebSocketStore = create<WebSocketState>((set) => ({
   status: 'idle',
 
-  connect: () => {
-    if (socket === null) {
-      socket = new MarketSocket({
-        onStatus: (status) => set({ status }),
-        onPrice: (price) => useMarketStore.getState().applyPrice(price),
-        onOrderBook: (orderBook) => useMarketStore.getState().applyOrderBook(orderBook),
-      })
-    }
-    socket.connect()
-  },
+  connect: () => getSocket(set).connect(),
 
   disconnect: () => socket?.disconnect(),
 
-  subscribe: (symbols) => socket?.subscribe(symbols),
+  subscribe: (symbols) => getSocket(set).subscribe(symbols),
 
   unsubscribe: (symbols) => socket?.unsubscribe(symbols),
 }))

@@ -3,6 +3,7 @@
 - 상태: 채택
 - 날짜: 2026-10-14
 - 관련: CLAUDE.md §47 Phase 7, §54, §64. 대체: `docs/architecture/phase7-ci.md`의 "Dockerfile 하나 + 이미지 안에서 Gradle 금지" 결정
+- 갱신: ADR-0025 — jar를 레이어로 펼쳐 넣는다(JVM 옵션은 그대로)
 
 ## 배경
 

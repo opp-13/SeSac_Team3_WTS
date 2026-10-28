@@ -2934,6 +2934,9 @@ Valkey는 tier마다 하나씩 둔다. market-service · trading-service는 repl
 - 푸시는 CI가 아니라 ./infra/scripts/push-images.sh <channel|corebank> <태그> 로 한다. 태그는 불변이고 latest를 쓰지 않는다.
 ```
 
+> **→ ADR-0025:** jar를 레이어로 펼쳐 넣는다. JVM 옵션은 그대로 `-XX:MaxRAMPercentage=75 -XX:+UseContainerSupport`다(768Mi에서 SerialGC · 힙 약 576MB).
+> 힙 60% · G1 등은 검토했지만 넣지 않았다. probe `timeoutSeconds`는 3초(trader-gitops). 배포의 env `JAVA_OPTS`로 덮어쓸 수 있다.
+
 ## 64.4 2단계 – 설계 전
 
 channel → corebank는 internal ALB 443 하나뿐이고 Kafka는 tier를 넘지 못한다. 그래서 1단계에서는

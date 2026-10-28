@@ -37,6 +37,9 @@ function parseTs(ts) {
 export function marketSession({ symbols = [], durationMs, tags = {}, every = [], onEnd = null }) {
   const subscribed = new Set(symbols);
   const lastPriceAt = {};
+  // 세션 중에 다시 구독한 종목. 구독 직후 오는 첫 PRICE는 서버 캐시의 스냅샷이라 지연 · 간격 측정에서 뺀다.
+  // 빼지 않으면 "종목을 뺐다가 다시 구독하기까지"가 공백으로 잡힌다(2026-10-21 T3에서 ws_quote_gap_ms 최대 26분).
+  const resubscribed = new Set();
   const started = Date.now();
   let current = null;
   let finished = false;
@@ -46,11 +49,17 @@ export function marketSession({ symbols = [], durationMs, tags = {}, every = [],
   const ctl = {
     symbols: () => Array.from(subscribed),
     subscribe(list) {
-      list.forEach((s) => subscribed.add(s));
+      list.forEach((s) => {
+        subscribed.add(s);
+        resubscribed.add(s);
+      });
       send({ type: 'SUBSCRIBE', symbols: list });
     },
     unsubscribe(list) {
-      list.forEach((s) => subscribed.delete(s));
+      list.forEach((s) => {
+        subscribed.delete(s);
+        delete lastPriceAt[s];
+      });
       send({ type: 'UNSUBSCRIBE', symbols: list });
     },
     end,
@@ -99,8 +108,9 @@ export function marketSession({ symbols = [], durationMs, tags = {}, every = [],
       wsMsgs.add(1, Object.assign({ type: m.type }, tags));
       if (m.type === 'PRICE') {
         const now = Date.now();
-        if (!seen.has(m.symbol)) {
+        if (!seen.has(m.symbol) || resubscribed.has(m.symbol)) {
           seen.add(m.symbol);
+          resubscribed.delete(m.symbol);
           lastPriceAt[m.symbol] = now;
           return;
         }

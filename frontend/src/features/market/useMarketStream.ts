@@ -11,7 +11,8 @@ import { useWebSocketStore } from '../../stores/websocketStore'
  * <p>목록이 바뀌면 새 종목만 구독하고 <b>빠진 종목은 구독을 푼다</b>. 검색어를 바꿀 때마다
  * 구독이 쌓이면 서버가 화면에 없는 종목까지 계속 보낸다.
  *
- * 연결 전에 구독을 요청해도 괜찮다. 소켓이 종목을 기억했다가 연결되는 순간 한꺼번에 보낸다.
+ * 연결 전에 구독을 요청해도 괜찮다. 소켓이 종목을 기억했다가 연결되는 순간 한꺼번에 보낸다
+ * (websocketStore가 소켓을 먼저 만들어 둔다 - 첫 로드에는 이 effect가 앱 껍데기의 connect보다 먼저 돈다).
  */
 export function useMarketStream(symbols: readonly string[]): void {
   const subscribe = useWebSocketStore((state) => state.subscribe)

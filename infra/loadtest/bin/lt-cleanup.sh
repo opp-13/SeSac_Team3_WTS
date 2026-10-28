@@ -17,12 +17,13 @@ like="${EMAIL_PREFIX:-lt}-%@loadtest.local"
 sqlc() { # channel: <db> <sql>
   local pw
   pw="$(kc -n mysql get secret mysql-cluster-secret -o jsonpath='{.data.rootPassword}' | base64 -d)"
-  kc -n mysql exec -i mysql-0 -c mysql -- env MYSQL_PWD="$pw" mysql -h mysql.mysql.svc -uroot -N -B "$1" -e "$2"
+  # SQL은 stdin으로 넘긴다. 시험 계정 수백 개의 id가 들어가 -e 인자로는 한도(128KB)를 넘는다(2026-10-21, 800개).
+  kc -n mysql exec -i mysql-0 -c mysql -- env MYSQL_PWD="$pw" mysql -h mysql.mysql.svc -uroot -N -B "$1" <<<"$2"
 }
 sqlb() { # corebank: <db> <sql>
   local pw
   pw="$(kcb -n mysql get secret mysql-cluster-secret -o jsonpath='{.data.rootPassword}' | base64 -d)"
-  kcb -n mysql exec -i mysql-0 -c mysql -- env MYSQL_PWD="$pw" mysql -h mysql.mysql.svc -uroot -N -B "$1" -e "$2"
+  kcb -n mysql exec -i mysql-0 -c mysql -- env MYSQL_PWD="$pw" mysql -h mysql.mysql.svc -uroot -N -B "$1" <<<"$2"
 }
 
 ids="$(sqlc wts_user "SELECT CONCAT('''', id, '''') FROM users WHERE email LIKE '$like'" | paste -sd, -)"
